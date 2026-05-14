@@ -7,3 +7,22 @@ body,
 #root {
   height: 100%;
 }
+
+body {
+  font-family: 'CooltraGilroy', 'Arial', sans-serif;
+  color: #052f62;
+  background-color: #008aff;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.font-extra {
+  font-family: 'CooltraGilroy ExtraBold', 'CooltraGilroy', 'Arial', sans-serif;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+}
+
+.font-semi {
+  font-family: 'CooltraGilroy SemiBold', 'CooltraGilroy', 'Arial', sans-serif;
+  font-weight: 600;
+}
