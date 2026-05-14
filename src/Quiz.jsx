@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Users, ChevronRight, RotateCcw, Monitor, Smartphone, Trophy, BarChart3, AlertCircle, Zap, Copy, Check, Lock, LogOut, FileDown, Share2, FileText, Image as ImageIcon } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
 
 const PALETTE = ['#008aff', '#052f62', '#ec6e24', '#05e100'];
 
@@ -734,7 +735,7 @@ export default function Quiz({ game, questions, role, onExit }) {
   if (role === 'presenter' && !state.started) {
     const participantUrl = buildParticipantUrl(gameId);
     return (
-      <div className="relative min-h-screen bg-cooltra-blue px-5 md:px-8 pt-5 pb-16 flex flex-col">
+      <div className="relative min-h-screen bg-cooltra-blue px-5 md:px-8 pt-4 pb-16 flex flex-col">
         <div className="flex items-center justify-end">
           <button
             onClick={closeSessions}
@@ -745,49 +746,61 @@ export default function Quiz({ game, questions, role, onExit }) {
           </button>
         </div>
 
-        <div className="flex-1 flex flex-col items-center justify-center max-w-3xl mx-auto w-full text-center">
-          {game.badge && (
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cooltra-white/15 border border-cooltra-white/30 mb-6">
-              <span className="w-1.5 h-1.5 rounded-full bg-cooltra-green animate-pulse" />
-              <span className="text-cooltra-white text-[11px] font-semi uppercase tracking-[0.18em]">{game.badge}</span>
-            </div>
-          )}
-
-          <h1 className="font-extra text-cooltra-white text-3xl md:text-5xl mb-3 leading-[1.05]">
-            {game.title}
-          </h1>
-          {game.subtitle && (
-            <p className="text-cooltra-white/85 text-base md:text-lg mb-6 max-w-xl">
-              {game.subtitle}
-            </p>
-          )}
-
-          <div className="w-full max-w-md mb-6">
-            <ShareLinkRow label="Participantes" url={participantUrl} />
+        <div className="flex-1 flex flex-col items-center justify-center max-w-5xl mx-auto w-full">
+          <div className="text-center mb-5 md:mb-6">
+            {game.badge && (
+              <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cooltra-white/15 border border-cooltra-white/30 mb-3">
+                <span className="w-1.5 h-1.5 rounded-full bg-cooltra-green animate-pulse" />
+                <span className="text-cooltra-white text-[11px] font-semi uppercase tracking-[0.18em]">{game.badge}</span>
+              </div>
+            )}
+            <h1 className="font-extra text-cooltra-white text-3xl md:text-5xl mb-2 leading-[1.05]">
+              {game.title}
+            </h1>
+            {game.subtitle && (
+              <p className="text-cooltra-white/85 text-sm md:text-base max-w-xl mx-auto">
+                {game.subtitle}
+              </p>
+            )}
           </div>
 
-          <div className="flex flex-col items-center mb-8">
-            <div className="font-extra text-cooltra-white text-[7rem] md:text-[10rem] leading-none">
-              {participantCount}
+          <div className="grid md:grid-cols-[1fr_auto] gap-6 md:gap-10 items-center w-full mb-2">
+            <div className="flex flex-col items-center gap-4">
+              <div className="w-full max-w-md">
+                <ShareLinkRow label="Participantes" url={participantUrl} />
+              </div>
+              <div className="flex items-baseline gap-3">
+                <div className="font-extra text-cooltra-white text-[5rem] md:text-[7rem] leading-none">
+                  {participantCount}
+                </div>
+                <div className="text-cooltra-white/80 font-semi text-xs md:text-sm uppercase tracking-[0.18em] max-w-[8rem] text-left">
+                  {participantsLabel}
+                </div>
+              </div>
+              <button
+                onClick={startSession}
+                disabled={participantCount === 0}
+                className="px-10 py-3.5 bg-cooltra-white text-cooltra-blue font-extra rounded-full text-lg transition flex items-center gap-2 hover:-translate-y-0.5 hover:shadow-cooltra disabled:opacity-50 disabled:hover:translate-y-0 disabled:cursor-not-allowed"
+              >
+                <Zap className="w-5 h-5" />
+                Empezar
+              </button>
+              {participantCount === 0 && (
+                <p className="text-cooltra-white/65 text-xs font-semi text-center">
+                  Comparte el enlace o el QR con la sala para que se conecten
+                </p>
+              )}
             </div>
-            <div className="text-cooltra-white/80 font-semi text-xs md:text-sm uppercase tracking-[0.18em] mt-1">
-              {participantsLabel}
+            <div className="bg-cooltra-white rounded-cooltra p-3 md:p-4 shadow-cooltra mx-auto md:mx-0">
+              <QRCodeSVG
+                value={participantUrl}
+                size={220}
+                level="M"
+                marginSize={0}
+                aria-label="Código QR para unirse como participante"
+              />
             </div>
           </div>
-
-          <button
-            onClick={startSession}
-            disabled={participantCount === 0}
-            className="px-10 py-4 bg-cooltra-white text-cooltra-blue font-extra rounded-full text-lg transition flex items-center gap-2 hover:-translate-y-0.5 hover:shadow-cooltra disabled:opacity-50 disabled:hover:translate-y-0 disabled:cursor-not-allowed"
-          >
-            <Zap className="w-5 h-5" />
-            Empezar
-          </button>
-          {participantCount === 0 && (
-            <p className="text-cooltra-white/65 text-xs mt-3 font-semi">
-              Comparte el enlace con la sala para que se conecten
-            </p>
-          )}
         </div>
 
         <BrandFooter branding={branding} tone="white" />
