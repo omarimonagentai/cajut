@@ -22,7 +22,28 @@ const EMPTY_GAME_STATE = {
 
 function gameSliceFromRecord(record, gameId) {
   const games = record?.games || {};
-  return games[gameId] ? { ...EMPTY_GAME_STATE, ...games[gameId] } : EMPTY_GAME_STATE;
+  const slice = games[gameId];
+  if (!slice) return EMPTY_GAME_STATE;
+  const rawParticipants = Array.isArray(slice.participants) ? slice.participants : [];
+  const participants = [...new Set(rawParticipants.filter(Boolean))];
+  return { ...EMPTY_GAME_STATE, ...slice, participants };
+}
+
+function getOrCreateParticipantId(gameId) {
+  if (typeof window === 'undefined' || !window.sessionStorage) {
+    return `p_${Math.random().toString(36).slice(2, 9)}`;
+  }
+  const key = `cajut:participant:${gameId}`;
+  try {
+    let id = window.sessionStorage.getItem(key);
+    if (!id) {
+      id = `p_${Math.random().toString(36).slice(2, 9)}`;
+      window.sessionStorage.setItem(key, id);
+    }
+    return id;
+  } catch {
+    return `p_${Math.random().toString(36).slice(2, 9)}`;
+  }
 }
 
 function normalizeParticipants(participants, now = Date.now()) {
@@ -597,7 +618,8 @@ function ResultsActions({ game, questions, state }) {
 export default function Quiz({ game, questions, role, onExit }) {
   const branding = game.branding;
   const gameId = game.id;
-  const participantIdRef = useRef(`p_${Math.random().toString(36).slice(2, 9)}`);
+  const [initialParticipantId] = useState(() => getOrCreateParticipantId(gameId));
+  const participantIdRef = useRef(initialParticipantId);
   const registeredRef = useRef(false);
   const sessionIdRef = useRef(null);
   const [state, setState] = useState(EMPTY_GAME_STATE);
@@ -738,6 +760,32 @@ export default function Quiz({ game, questions, role, onExit }) {
       }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, gameId]);
+
+  useEffect(() => {
+    return () => {
+      if (role !== 'participant' || !registeredRef.current) return;
+      const id = participantIdRef.current;
+      registeredRef.current = false;
+      if (!id) return;
+      (async () => {
+        try {
+          const record = await fetchAllStates();
+          const slice = gameSliceFromRecord(record, gameId);
+          if (!slice.participants.includes(id)) return;
+          const next = {
+            ...slice,
+            participants: slice.participants.filter((p) => p !== id),
+          };
+          await writeAllStates({
+            ...record,
+            games: { ...record.games, [gameId]: next },
+          });
+        } catch {
+          // best-effort
+        }
+      })();
+    };
   }, [role, gameId]);
 
   useEffect(() => {
