@@ -1,118 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Users, ChevronRight, RotateCcw, Monitor, Smartphone, Trophy, BarChart3, AlertCircle, Zap, Copy, Check, Lock, LogOut, FileDown, Share2, FileText, Image as ImageIcon } from 'lucide-react';
+import React, { useCallback, useState } from 'react';
+import { Users, ChevronRight, RotateCcw, Trophy, BarChart3, Zap, Copy, Check, LogOut, FileDown, Share2, FileText, Image as ImageIcon } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
+import {
+  EMPTY_GAME_STATE,
+  activeParticipantIds,
+  pruneParticipants,
+  useSession,
+} from './lib/session.js';
 
 const PALETTE = ['#008aff', '#052f62', '#ec6e24', '#05e100'];
-
-const BIN_ID = import.meta.env.VITE_JSONBIN_ID || "6a04316d250b1311c342ab9a";
-const API_KEY = import.meta.env.VITE_JSONBIN_KEY || "";
-const BIN_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
-const POLL_INTERVAL_MS = 2000;
-const HEARTBEAT_INTERVAL_MS = 10000;
-const PARTICIPANT_TIMEOUT_MS = 25000;
-
-const EMPTY_GAME_STATE = {
-  currentQuestion: 0,
-  showResults: false,
-  votes: {},
-  participants: {},
-  sessionId: 0,
-  started: false,
-};
-
-function gameSliceFromRecord(record, gameId) {
-  const games = record?.games || {};
-  const slice = games[gameId];
-  if (!slice) return EMPTY_GAME_STATE;
-  const rawParticipants = Array.isArray(slice.participants) ? slice.participants : [];
-  const participants = [...new Set(rawParticipants.filter(Boolean))];
-  return { ...EMPTY_GAME_STATE, ...slice, participants };
-}
-
-function getOrCreateParticipantId(gameId) {
-  if (typeof window === 'undefined' || !window.sessionStorage) {
-    return `p_${Math.random().toString(36).slice(2, 9)}`;
-  }
-  const key = `cajut:participant:${gameId}`;
-  try {
-    let id = window.sessionStorage.getItem(key);
-    if (!id) {
-      id = `p_${Math.random().toString(36).slice(2, 9)}`;
-      window.sessionStorage.setItem(key, id);
-    }
-    return id;
-  } catch {
-    return `p_${Math.random().toString(36).slice(2, 9)}`;
-  }
-}
-
-function normalizeParticipants(participants, now = Date.now()) {
-  if (!participants) return {};
-  if (Array.isArray(participants)) {
-    return Object.fromEntries(participants.map((id) => [id, now]));
-  }
-  if (typeof participants !== 'object') return {};
-  return participants;
-}
-
-function activeParticipantIds(participants, now = Date.now()) {
-  const map = normalizeParticipants(participants, now);
-  return Object.entries(map)
-    .filter(([, ts]) => typeof ts === 'number' && now - ts < PARTICIPANT_TIMEOUT_MS)
-    .map(([id]) => id);
-}
-
-function pruneParticipants(participants, now = Date.now()) {
-  const map = normalizeParticipants(participants, now);
-  const result = {};
-  for (const [id, ts] of Object.entries(map)) {
-    if (typeof ts === 'number' && now - ts < PARTICIPANT_TIMEOUT_MS) {
-      result[id] = ts;
-    }
-  }
-  return result;
-}
-
-async function fetchAllStates() {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 5000);
-  try {
-    const res = await fetch(`${BIN_URL}/latest`, {
-      headers: { 'X-Master-Key': API_KEY },
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-    if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
-    const data = await res.json();
-    const record = data.record || {};
-    return { games: record.games && typeof record.games === 'object' ? record.games : {} };
-  } catch (e) {
-    clearTimeout(timeoutId);
-    throw e;
-  }
-}
-
-async function writeAllStates(record) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 5000);
-  try {
-    const res = await fetch(BIN_URL, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Master-Key': API_KEY,
-      },
-      body: JSON.stringify(record),
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
-    if (!res.ok) throw new Error(`Write failed: ${res.status}`);
-    return res.json();
-  } catch (e) {
-    clearTimeout(timeoutId);
-    throw e;
-  }
-}
 
 function buildParticipantUrl(gameId) {
   if (typeof window === 'undefined') return '';
@@ -165,6 +61,23 @@ function BrandFooter({ branding, tone = 'white' }) {
         </span>
       ) : <span />}
       <Wordmark branding={branding} tone={tone} />
+    </div>
+  );
+}
+
+function ReconnectingBadge({ status, tone = 'white' }) {
+  if (status !== 'reconnecting') return null;
+  const palette = tone === 'white'
+    ? 'bg-cooltra-orange/90 text-cooltra-white border-cooltra-orange'
+    : 'bg-cooltra-orange/10 text-cooltra-orange border-cooltra-orange/40';
+  return (
+    <div
+      role="status"
+      aria-live="polite"
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[11px] font-semi uppercase tracking-[0.18em] ${palette}`}
+    >
+      <span className="w-1.5 h-1.5 rounded-full bg-current animate-pulse" />
+      Reconectando…
     </div>
   );
 }
@@ -618,209 +531,42 @@ function ResultsActions({ game, questions, state }) {
 export default function Quiz({ game, questions, role, onExit }) {
   const branding = game.branding;
   const gameId = game.id;
-  const [initialParticipantId] = useState(() => getOrCreateParticipantId(gameId));
-  const participantIdRef = useRef(initialParticipantId);
-  const registeredRef = useRef(false);
-  const sessionIdRef = useRef(null);
-  const [state, setState] = useState(EMPTY_GAME_STATE);
-  const [error, setError] = useState(null);
   const [hasVoted, setHasVoted] = useState({});
-  const writingRef = useRef(false);
 
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        const record = await fetchAllStates();
-        if (active) setState(gameSliceFromRecord(record, gameId));
-      } catch (e) {
-        console.warn('Initial fetch failed:', e.message);
-      }
-    })();
-    return () => { active = false; };
-  }, [gameId]);
-
-  useEffect(() => {
-    const interval = setInterval(async () => {
-      if (writingRef.current) return;
-      try {
-        const record = await fetchAllStates();
-        setState(gameSliceFromRecord(record, gameId));
-        if (error) setError(null);
-      } catch (e) {
-        // silent fail
-      }
-    }, POLL_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [error, gameId]);
-
-  const safeUpdate = async (updaterFn, { force = false } = {}) => {
-    writingRef.current = true;
-    try {
-      const record = await fetchAllStates();
-      const currentSlice = gameSliceFromRecord(record, gameId);
-      if (
-        !force &&
-        sessionIdRef.current !== null &&
-        (currentSlice.sessionId ?? 0) !== sessionIdRef.current
-      ) {
-        return;
-      }
-      const nextSlice = updaterFn(currentSlice);
-      const nextRecord = {
-        ...record,
-        games: { ...record.games, [gameId]: nextSlice },
-      };
-      await writeAllStates(nextRecord);
-      setState(nextSlice);
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      writingRef.current = false;
-    }
-  };
-
-  useEffect(() => {
-    if (sessionIdRef.current !== null) return;
-    let active = true;
-    (async () => {
-      try {
-        const record = await fetchAllStates();
-        if (!active) return;
-        const slice = gameSliceFromRecord(record, gameId);
-        sessionIdRef.current = slice.sessionId ?? 0;
-        if (role === 'participant' && !registeredRef.current) {
-          registeredRef.current = true;
-          await safeUpdate((current) => ({
-            ...current,
-            participants: {
-              ...pruneParticipants(current.participants),
-              [participantIdRef.current]: Date.now(),
-            },
-          }));
-        }
-      } catch (e) {
-        // silent: registration will retry
-      }
-    })();
-    return () => {
-      active = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role, gameId]);
-
-  useEffect(() => {
-    if (role !== 'participant') return;
-    const interval = setInterval(() => {
-      if (writingRef.current) return;
-      if (!registeredRef.current) return;
-      if (sessionIdRef.current === null) return;
-      safeUpdate((current) => ({
-        ...current,
-        participants: {
-          ...pruneParticipants(current.participants),
-          [participantIdRef.current]: Date.now(),
-        },
-      })).catch(() => {});
-    }, HEARTBEAT_INTERVAL_MS);
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role, gameId]);
-
-  useEffect(() => {
-    if (role !== 'participant') return undefined;
-    const myId = participantIdRef.current;
-    const deregister = async () => {
-      const expectedSessionId = sessionIdRef.current;
-      if (expectedSessionId === null) return;
-      try {
-        const record = await fetchAllStates();
-        const currentSlice = gameSliceFromRecord(record, gameId);
-        if ((currentSlice.sessionId ?? 0) !== expectedSessionId) return;
-        const map = normalizeParticipants(currentSlice.participants);
-        if (!(myId in map)) return;
-        const { [myId]: _removed, ...rest } = map;
-        const nextSlice = { ...currentSlice, participants: rest };
-        const nextRecord = {
-          ...record,
-          games: { ...record.games, [gameId]: nextSlice },
-        };
-        await writeAllStates(nextRecord);
-      } catch (e) {
-        // best-effort
-      }
-    };
-    const onBeforeUnload = () => { deregister(); };
-    window.addEventListener('beforeunload', onBeforeUnload);
-    return () => {
-      window.removeEventListener('beforeunload', onBeforeUnload);
-      if (registeredRef.current) {
-        registeredRef.current = false;
-        deregister();
-      }
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role, gameId]);
-
-  useEffect(() => {
-    return () => {
-      if (role !== 'participant' || !registeredRef.current) return;
-      const id = participantIdRef.current;
-      registeredRef.current = false;
-      if (!id) return;
-      (async () => {
-        try {
-          const record = await fetchAllStates();
-          const slice = gameSliceFromRecord(record, gameId);
-          if (!slice.participants.includes(id)) return;
-          const next = {
-            ...slice,
-            participants: slice.participants.filter((p) => p !== id),
-          };
-          await writeAllStates({
-            ...record,
-            games: { ...record.games, [gameId]: next },
-          });
-        } catch {
-          // best-effort
-        }
-      })();
-    };
-  }, [role, gameId]);
-
-  useEffect(() => {
-    if (sessionIdRef.current === null) return;
-    const current = state.sessionId ?? 0;
-    if (current === sessionIdRef.current) return;
-    sessionIdRef.current = null;
-    registeredRef.current = false;
+  const handleSessionClosed = useCallback(() => {
     setHasVoted({});
     clearAuthFromUrl();
     onExit?.();
-  }, [state.sessionId, onExit]);
+  }, [onExit]);
+
+  const { state, status, participantId, update } = useSession({
+    gameId,
+    role,
+    onSessionClosed: handleSessionClosed,
+  });
 
   const submitVote = async (optionIndex) => {
     const qId = questions[state.currentQuestion].id;
     if (hasVoted[qId] !== undefined) return;
     setHasVoted({ ...hasVoted, [qId]: optionIndex });
-    await safeUpdate((latest) => {
+    await update((latest) => {
       const currentVotes = latest.votes[qId] || {};
       return {
         ...latest,
         votes: {
           ...latest.votes,
-          [qId]: { ...currentVotes, [participantIdRef.current]: optionIndex },
+          [qId]: { ...currentVotes, [participantId]: optionIndex },
         },
       };
     });
   };
 
   const showResults = async () => {
-    await safeUpdate((latest) => ({ ...latest, showResults: true }));
+    await update((latest) => ({ ...latest, showResults: true }));
   };
 
   const nextQuestion = async () => {
-    await safeUpdate((latest) => ({
+    await update((latest) => ({
       ...latest,
       currentQuestion: latest.currentQuestion + 1,
       showResults: false,
@@ -830,7 +576,7 @@ export default function Quiz({ game, questions, role, onExit }) {
   const resetQuiz = async () => {
     if (!window.confirm('¿Seguro que quieres reiniciar el quiz? Se perderán todos los votos.')) return;
     setHasVoted({});
-    await safeUpdate((latest) => ({
+    await update((latest) => ({
       ...EMPTY_GAME_STATE,
       sessionId: latest.sessionId ?? 0,
       started: latest.started ?? false,
@@ -841,31 +587,12 @@ export default function Quiz({ game, questions, role, onExit }) {
   const closeSessions = async () => {
     if (!window.confirm('¿Cerrar la sesión? Todos los participantes volverán a la pantalla de inicio.')) return;
     setHasVoted({});
-    await safeUpdate(() => ({ ...EMPTY_GAME_STATE, sessionId: Date.now() }), { force: true });
+    await update(() => ({ ...EMPTY_GAME_STATE, sessionId: Date.now() }), { force: true });
   };
 
   const startSession = async () => {
-    await safeUpdate((latest) => ({ ...latest, started: true, currentQuestion: 0, showResults: false }));
+    await update((latest) => ({ ...latest, started: true, currentQuestion: 0, showResults: false }));
   };
-
-  if (error) {
-    return (
-      <div className="relative min-h-screen bg-cooltra-blue flex items-center justify-center p-6">
-        <div className="max-w-md w-full text-center bg-cooltra-white rounded-cooltra p-8 shadow-cooltra">
-          <AlertCircle className="w-12 h-12 text-cooltra-orange mx-auto mb-4" />
-          <h2 className="font-extra text-cooltra-blue text-2xl mb-2">Problema de conexión</h2>
-          <p className="text-cooltra-dark/70 text-sm mb-5">{error}</p>
-          <button
-            onClick={() => setError(null)}
-            className="px-5 py-2.5 bg-cooltra-blue hover:bg-cooltra-dark text-cooltra-white rounded-full text-sm font-semi transition"
-          >
-            Continuar igualmente
-          </button>
-        </div>
-        <BrandFooter branding={branding} tone="white" />
-      </div>
-    );
-  }
 
   const isFinished = state.currentQuestion >= questions.length;
   const currentQ = questions[state.currentQuestion];
@@ -881,7 +608,8 @@ export default function Quiz({ game, questions, role, onExit }) {
     const participantUrl = buildParticipantUrl(gameId);
     return (
       <div className="relative min-h-screen bg-cooltra-blue px-5 md:px-8 pt-4 pb-16 flex flex-col">
-        <div className="flex items-center justify-end">
+        <div className="flex items-center justify-end gap-2">
+          <ReconnectingBadge status={status} />
           <button
             onClick={closeSessions}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-cooltra-white/15 hover:bg-cooltra-white/25 border border-cooltra-white/30 rounded-full text-cooltra-white text-xs font-semi transition"
@@ -957,9 +685,12 @@ export default function Quiz({ game, questions, role, onExit }) {
     return (
       <div className="relative min-h-screen bg-cooltra-blue px-5 pt-6 pb-16 flex flex-col">
         <div className="flex-1 flex flex-col items-center justify-center max-w-md mx-auto w-full text-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cooltra-white/15 border border-cooltra-white/30 mb-6">
-            <span className="w-1.5 h-1.5 rounded-full bg-cooltra-green animate-pulse" />
-            <span className="text-cooltra-white text-[11px] font-semi uppercase tracking-[0.18em]">Sala de espera</span>
+          <div className="flex items-center gap-2 mb-6">
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cooltra-white/15 border border-cooltra-white/30">
+              <span className="w-1.5 h-1.5 rounded-full bg-cooltra-green animate-pulse" />
+              <span className="text-cooltra-white text-[11px] font-semi uppercase tracking-[0.18em]">Sala de espera</span>
+            </div>
+            <ReconnectingBadge status={status} />
           </div>
 
           <h1 className="font-extra text-cooltra-white text-3xl mb-3 leading-tight">
@@ -998,6 +729,7 @@ export default function Quiz({ game, questions, role, onExit }) {
                 <h1 className="font-extra text-cooltra-white text-2xl md:text-3xl">Resumen del Quiz</h1>
               </div>
               <div className="flex items-center gap-2">
+                <ReconnectingBadge status={status} />
                 <button
                   onClick={resetQuiz}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-cooltra-white/15 hover:bg-cooltra-white/25 border border-cooltra-white/30 rounded-full text-cooltra-white text-xs font-semi transition"
@@ -1088,6 +820,7 @@ export default function Quiz({ game, questions, role, onExit }) {
               <span className="font-extra text-base md:text-lg text-cooltra-blue/55 leading-none">/ {participantCount}</span>
               <span className="text-[10px] font-extra uppercase tracking-[0.18em] text-cooltra-blue/70">votos</span>
             </div>
+            <ReconnectingBadge status={status} />
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -1206,7 +939,10 @@ export default function Quiz({ game, questions, role, onExit }) {
           <div className="px-3 py-1 rounded-full bg-cooltra-blue text-cooltra-white text-xs font-extra uppercase tracking-[0.18em]">
             Pregunta {state.currentQuestion + 1} / {questions.length}
           </div>
-          <div className="text-cooltra-dark/60 text-xs font-semi uppercase tracking-[0.14em]">Voto anónimo</div>
+          <div className="flex items-center gap-2">
+            <ReconnectingBadge status={status} tone="blue" />
+            <div className="text-cooltra-dark/60 text-xs font-semi uppercase tracking-[0.14em]">Voto anónimo</div>
+          </div>
         </div>
 
         <h2 className="font-extra text-cooltra-blue text-3xl mb-8 leading-tight">
