@@ -1,31 +1,39 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Users, ChevronRight, RotateCcw, Monitor, Smartphone, Trophy, BarChart3, AlertCircle, Zap, Copy, Check, Lock } from 'lucide-react';
+import { Users, ChevronRight, RotateCcw, Monitor, Smartphone, Trophy, BarChart3, AlertCircle, Zap, Copy, Check, Lock, LogOut } from 'lucide-react';
 
 const COOLTRA_PALETTE = ['#008aff', '#052f62', '#ec6e24', '#05e100'];
 
-const PRESENTER_KEY = import.meta.env.VITE_PRESENTER_KEY || '';
+const PRESENTER_KEY = import.meta.env.VITE_PRESENTER_KEY || 'cooltra-ride-2026';
 
 const QUESTIONS_URL = `${import.meta.env.BASE_URL}questions.json`;
 
 function getInitialModeFromUrl() {
   if (typeof window === 'undefined') return null;
   const params = new URLSearchParams(window.location.search);
-  const role = params.get('role');
-  if (role === 'participant') return 'participant';
-  if (role === 'presenter') {
-    if (!PRESENTER_KEY) return 'presenter';
-    return params.get('key') === PRESENTER_KEY ? 'presenter' : 'denied';
+  const ctrl = params.get('ctrl');
+  if (ctrl !== null) {
+    return ctrl === PRESENTER_KEY ? 'presenter' : 'denied';
   }
+  if (params.get('role') === 'participant') return 'participant';
   return null;
 }
 
 function buildShareUrl(role) {
   if (typeof window === 'undefined') return '';
   const base = `${window.location.origin}${window.location.pathname}`;
-  if (role === 'presenter' && PRESENTER_KEY) {
-    return `${base}?role=presenter&key=${encodeURIComponent(PRESENTER_KEY)}`;
+  if (role === 'presenter') {
+    return `${base}?ctrl=${encodeURIComponent(PRESENTER_KEY)}`;
   }
   return `${base}?role=${role}`;
+}
+
+function clearRoleFromUrl() {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete('role');
+  url.searchParams.delete('ctrl');
+  url.searchParams.delete('key');
+  window.history.replaceState({}, '', url.toString());
 }
 
 async function fetchQuestions() {
@@ -44,6 +52,8 @@ const DEFAULT_STATE = {
   showResults: false,
   votes: {},
   participants: [],
+  sessionId: 0,
+  started: false,
 };
 
 async function fetchState() {
@@ -154,6 +164,7 @@ export default function CooltraAIQuiz() {
   const [mode, setMode] = useState(getInitialModeFromUrl);
   const participantIdRef = useRef(`p_${Math.random().toString(36).slice(2, 9)}`);
   const registeredRef = useRef(false);
+  const sessionIdRef = useRef(null);
   const [state, setState] = useState(DEFAULT_STATE);
   const [questions, setQuestions] = useState(null);
   const [questionsError, setQuestionsError] = useState(null);
@@ -220,14 +231,39 @@ export default function CooltraAIQuiz() {
   };
 
   useEffect(() => {
-    if (mode !== 'participant' || registeredRef.current) return;
-    registeredRef.current = true;
-    safeUpdate((latest) => {
-      if (latest.participants.includes(participantIdRef.current)) return latest;
-      return { ...latest, participants: [...latest.participants, participantIdRef.current] };
-    });
+    if (mode !== 'participant' && mode !== 'presenter') {
+      sessionIdRef.current = null;
+      return;
+    }
+    if (sessionIdRef.current !== null) return;
+    (async () => {
+      try {
+        const latest = await fetchState();
+        sessionIdRef.current = latest.sessionId ?? 0;
+        if (mode === 'participant' && !registeredRef.current) {
+          registeredRef.current = true;
+          await safeUpdate((latestState) => {
+            if (latestState.participants.includes(participantIdRef.current)) return latestState;
+            return { ...latestState, participants: [...latestState.participants, participantIdRef.current] };
+          });
+        }
+      } catch (e) {
+        // silent: registration will retry on next mode change
+      }
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
+
+  useEffect(() => {
+    if (sessionIdRef.current === null) return;
+    const current = state.sessionId ?? 0;
+    if (current === sessionIdRef.current) return;
+    sessionIdRef.current = null;
+    registeredRef.current = false;
+    setHasVoted({});
+    setMode(null);
+    clearRoleFromUrl();
+  }, [state.sessionId]);
 
   const submitVote = async (optionIndex) => {
     const qId = questions[state.currentQuestion].id;
@@ -260,7 +296,22 @@ export default function CooltraAIQuiz() {
   const resetQuiz = async () => {
     if (!window.confirm('¿Seguro que quieres reiniciar el quiz? Se perderán todos los votos.')) return;
     setHasVoted({});
-    await safeUpdate(() => ({ ...DEFAULT_STATE }));
+    await safeUpdate((latest) => ({
+      ...DEFAULT_STATE,
+      sessionId: latest.sessionId ?? 0,
+      started: latest.started ?? false,
+      participants: latest.participants ?? [],
+    }));
+  };
+
+  const closeSessions = async () => {
+    if (!window.confirm('¿Cerrar la sesión? Todos los participantes volverán a la pantalla de inicio.')) return;
+    setHasVoted({});
+    await safeUpdate(() => ({ ...DEFAULT_STATE, sessionId: Date.now() }));
+  };
+
+  const startSession = async () => {
+    await safeUpdate((latest) => ({ ...latest, started: true, currentQuestion: 0, showResults: false }));
   };
 
   if (questionsError) {
@@ -400,9 +451,9 @@ export default function CooltraAIQuiz() {
               </div>
               <ShareLinkRow label="Participantes" url={participantUrl} />
               <ShareLinkRow label="Presentador" url={presenterUrl} />
-              {!PRESENTER_KEY && (
+              {!import.meta.env.VITE_PRESENTER_KEY && (
                 <p className="text-cooltra-white/60 text-[11px] leading-snug">
-                  Configura <code className="font-semi">VITE_PRESENTER_KEY</code> para proteger el enlace de presentador con una clave.
+                  Define <code className="font-semi">VITE_PRESENTER_KEY</code> en <code className="font-semi">.env</code> para usar una clave única en lugar de la predeterminada.
                 </p>
               )}
             </div>
@@ -425,6 +476,95 @@ export default function CooltraAIQuiz() {
   const optionCounts = currentQ
     ? currentQ.options.map((_, i) => Object.values(currentVotes).filter(v => v === i).length)
     : [];
+  const participantCount = state.participants.length;
+  const participantsLabel = participantCount === 1 ? 'persona conectada' : 'personas conectadas';
+
+  if (mode === 'presenter' && !state.started) {
+    return (
+      <div className="relative min-h-screen bg-cooltra-blue px-5 md:px-8 pt-5 pb-16 flex flex-col">
+        <div className="flex items-center justify-end">
+          <button
+            onClick={closeSessions}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-cooltra-white/15 hover:bg-cooltra-white/25 border border-cooltra-white/30 rounded-full text-cooltra-white text-xs font-semi transition"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            Cerrar sesión
+          </button>
+        </div>
+
+        <div className="flex-1 flex flex-col items-center justify-center max-w-3xl mx-auto w-full text-center">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cooltra-white/15 border border-cooltra-white/30 mb-6">
+            <span className="w-1.5 h-1.5 rounded-full bg-cooltra-green animate-pulse" />
+            <span className="text-cooltra-white text-[11px] font-semi uppercase tracking-[0.18em]">Sala de espera</span>
+          </div>
+
+          <h1 className="font-extra text-cooltra-white text-3xl md:text-5xl mb-3 leading-[1.05]">
+            Esperando a que se conecte la sala
+          </h1>
+          <p className="text-cooltra-white/85 text-base md:text-lg mb-8 max-w-xl">
+            Comparte el enlace de participante y pulsa <span className="font-extra">Empezar</span> cuando estéis listos.
+          </p>
+
+          <div className="flex flex-col items-center mb-8">
+            <div className="font-extra text-cooltra-white text-[7rem] md:text-[10rem] leading-none">
+              {participantCount}
+            </div>
+            <div className="text-cooltra-white/80 font-semi text-xs md:text-sm uppercase tracking-[0.18em] mt-1">
+              {participantsLabel}
+            </div>
+          </div>
+
+          <button
+            onClick={startSession}
+            disabled={participantCount === 0}
+            className="px-10 py-4 bg-cooltra-white text-cooltra-blue font-extra rounded-full text-lg transition flex items-center gap-2 hover:-translate-y-0.5 hover:shadow-cooltra disabled:opacity-50 disabled:hover:translate-y-0 disabled:cursor-not-allowed"
+          >
+            <Zap className="w-5 h-5" />
+            Empezar
+          </button>
+          {participantCount === 0 && (
+            <p className="text-cooltra-white/65 text-xs mt-3 font-semi">
+              Necesitas al menos un participante conectado
+            </p>
+          )}
+        </div>
+
+        <BrandFooter tone="white" />
+      </div>
+    );
+  }
+
+  if (mode === 'participant' && !state.started) {
+    return (
+      <div className="relative min-h-screen bg-cooltra-blue px-5 pt-6 pb-16 flex flex-col">
+        <div className="flex-1 flex flex-col items-center justify-center max-w-md mx-auto w-full text-center">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cooltra-white/15 border border-cooltra-white/30 mb-6">
+            <span className="w-1.5 h-1.5 rounded-full bg-cooltra-green animate-pulse" />
+            <span className="text-cooltra-white text-[11px] font-semi uppercase tracking-[0.18em]">Sala de espera</span>
+          </div>
+
+          <h1 className="font-extra text-cooltra-white text-3xl mb-3 leading-tight">
+            Esperando que el presentador arranque
+          </h1>
+
+          <div className="flex flex-col items-center my-8">
+            <div className="font-extra text-cooltra-white text-[6rem] leading-none">
+              {participantCount}
+            </div>
+            <div className="text-cooltra-white/80 font-semi text-xs uppercase tracking-[0.18em] mt-1">
+              {participantsLabel}
+            </div>
+          </div>
+
+          <p className="text-cooltra-white/85 text-base">
+            En cuanto el presentador empiece, verás aquí la primera pregunta.
+          </p>
+        </div>
+
+        <BrandFooter tone="white" />
+      </div>
+    );
+  }
 
   if (mode === 'presenter') {
     if (isFinished) {
@@ -438,13 +578,22 @@ export default function CooltraAIQuiz() {
                 </div>
                 <h1 className="font-extra text-cooltra-white text-2xl md:text-3xl">Resumen del Quiz</h1>
               </div>
-              <button
-                onClick={resetQuiz}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-cooltra-white/15 hover:bg-cooltra-white/25 border border-cooltra-white/30 rounded-full text-cooltra-white text-xs font-semi transition"
-              >
-                <RotateCcw className="w-3.5 h-3.5" />
-                Reiniciar
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={resetQuiz}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-cooltra-white/15 hover:bg-cooltra-white/25 border border-cooltra-white/30 rounded-full text-cooltra-white text-xs font-semi transition"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Reiniciar
+                </button>
+                <button
+                  onClick={closeSessions}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-cooltra-orange/90 hover:bg-cooltra-orange border border-cooltra-orange rounded-full text-cooltra-white text-xs font-extra uppercase tracking-[0.1em] transition"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  Cerrar sesión
+                </button>
+              </div>
             </div>
 
             <div className="grid md:grid-cols-2 gap-4">
@@ -517,13 +666,22 @@ export default function CooltraAIQuiz() {
               {voteCount} votos
             </div>
           </div>
-          <button
-            onClick={resetQuiz}
-            className="flex items-center gap-1.5 px-2.5 py-1 bg-cooltra-white/15 hover:bg-cooltra-white/25 border border-cooltra-white/30 rounded-full text-cooltra-white text-[11px] font-semi transition"
-          >
-            <RotateCcw className="w-3 h-3" />
-            Reiniciar
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={resetQuiz}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-cooltra-white/15 hover:bg-cooltra-white/25 border border-cooltra-white/30 rounded-full text-cooltra-white text-[11px] font-semi transition"
+            >
+              <RotateCcw className="w-3 h-3" />
+              Reiniciar
+            </button>
+            <button
+              onClick={closeSessions}
+              className="flex items-center gap-1.5 px-2.5 py-1 bg-cooltra-orange/90 hover:bg-cooltra-orange border border-cooltra-orange rounded-full text-cooltra-white text-[11px] font-extra uppercase tracking-[0.1em] transition"
+            >
+              <LogOut className="w-3 h-3" />
+              Cerrar sesión
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 flex flex-col justify-center max-w-6xl mx-auto w-full">
