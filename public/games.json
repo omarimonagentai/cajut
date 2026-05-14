@@ -1,0 +1,22 @@
+{
+  "games": [
+    {
+      "id": "cooltra-ride-2026",
+      "title": "Empujando Cooltra hacia la AI",
+      "subtitle": "Quiz inicial · 7 preguntas para entender en qué punto estamos antes de empezar el taller.",
+      "badge": "Cooltra · Equipo Directivo",
+      "presenterToken": "cooltra-presenter-9x4bp",
+      "branding": {
+        "tagline": "Time to Ride",
+        "wordmark": "cooltra",
+        "wordmarkAccentColor": "#05e100"
+      }
+    },
+    {
+      "id": "team-pulse",
+      "title": "¿Cómo estamos hoy?",
+      "subtitle": "Pulso rápido del equipo · 3 preguntas anónimas para empezar la reunión.",
+      "presenterToken": "pulse-presenter-7k2mq"
+    }
+  ]
+}
