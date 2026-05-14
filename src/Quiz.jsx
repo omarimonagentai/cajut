@@ -1,53 +1,14 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Users, ChevronRight, RotateCcw, Monitor, Smartphone, Trophy, BarChart3, AlertCircle, Zap, Copy, Check, Lock, LogOut, FileDown, Share2, FileText, Image as ImageIcon } from 'lucide-react';
 
-const COOLTRA_PALETTE = ['#008aff', '#052f62', '#ec6e24', '#05e100'];
-
-const PRESENTER_KEY = import.meta.env.VITE_PRESENTER_KEY || 'cooltra-ride-2026';
-
-const QUESTIONS_URL = `${import.meta.env.BASE_URL}questions.json`;
-
-function getInitialModeFromUrl() {
-  if (typeof window === 'undefined') return null;
-  const params = new URLSearchParams(window.location.search);
-  const ctrl = params.get('ctrl');
-  if (ctrl !== null) {
-    return ctrl === PRESENTER_KEY ? 'presenter' : 'denied';
-  }
-  if (params.get('role') === 'participant') return 'participant';
-  return null;
-}
-
-function buildShareUrl(role) {
-  if (typeof window === 'undefined') return '';
-  const base = `${window.location.origin}${window.location.pathname}`;
-  if (role === 'presenter') {
-    return `${base}?ctrl=${encodeURIComponent(PRESENTER_KEY)}`;
-  }
-  return `${base}?role=${role}`;
-}
-
-function clearRoleFromUrl() {
-  if (typeof window === 'undefined') return;
-  const url = new URL(window.location.href);
-  url.searchParams.delete('role');
-  url.searchParams.delete('ctrl');
-  url.searchParams.delete('key');
-  window.history.replaceState({}, '', url.toString());
-}
-
-async function fetchQuestions() {
-  const res = await fetch(QUESTIONS_URL, { cache: 'no-cache' });
-  if (!res.ok) throw new Error(`Questions fetch failed: ${res.status}`);
-  return res.json();
-}
+const PALETTE = ['#008aff', '#052f62', '#ec6e24', '#05e100'];
 
 const BIN_ID = import.meta.env.VITE_JSONBIN_ID || "6a04316d250b1311c342ab9a";
 const API_KEY = import.meta.env.VITE_JSONBIN_KEY || "";
 const BIN_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
 const POLL_INTERVAL_MS = 2000;
 
-const DEFAULT_STATE = {
+const EMPTY_GAME_STATE = {
   currentQuestion: 0,
   showResults: false,
   votes: {},
@@ -56,7 +17,12 @@ const DEFAULT_STATE = {
   started: false,
 };
 
-async function fetchState() {
+function gameSliceFromRecord(record, gameId) {
+  const games = record?.games || {};
+  return games[gameId] ? { ...EMPTY_GAME_STATE, ...games[gameId] } : EMPTY_GAME_STATE;
+}
+
+async function fetchAllStates() {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 5000);
   try {
@@ -67,14 +33,15 @@ async function fetchState() {
     clearTimeout(timeoutId);
     if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
     const data = await res.json();
-    return data.record || DEFAULT_STATE;
+    const record = data.record || {};
+    return { games: record.games && typeof record.games === 'object' ? record.games : {} };
   } catch (e) {
     clearTimeout(timeoutId);
     throw e;
   }
 }
 
-async function writeState(newState) {
+async function writeAllStates(record) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 5000);
   try {
@@ -84,7 +51,7 @@ async function writeState(newState) {
         'Content-Type': 'application/json',
         'X-Master-Key': API_KEY,
       },
-      body: JSON.stringify(newState),
+      body: JSON.stringify(record),
       signal: controller.signal,
     });
     clearTimeout(timeoutId);
@@ -96,21 +63,57 @@ async function writeState(newState) {
   }
 }
 
-function CooltraWordmark({ tone = 'white', className = '' }) {
+function buildParticipantUrl(gameId) {
+  if (typeof window === 'undefined') return '';
+  const base = `${window.location.origin}${window.location.pathname}`;
+  return `${base}?game=${encodeURIComponent(gameId)}`;
+}
+
+function clearAuthFromUrl() {
+  if (typeof window === 'undefined') return;
+  const url = new URL(window.location.href);
+  url.searchParams.delete('ctrl');
+  url.searchParams.delete('game');
+  window.history.replaceState({}, '', url.toString());
+}
+
+function Wordmark({ branding, tone = 'white', className = '' }) {
+  if (!branding?.wordmark) return null;
   const color = tone === 'white' ? '#feffff' : '#008aff';
+  const accent = branding.wordmarkAccentColor;
   return (
-    <div className={`flex items-center gap-1.5 ${className}`} aria-label="Cooltra">
+    <div className={`flex items-center gap-1.5 ${className}`} aria-label={branding.wordmark}>
       <span
         className="font-extra tracking-tight text-[1.05rem] leading-none"
         style={{ color }}
       >
-        cooltra
+        {branding.wordmark}
       </span>
-      <span
-        className="inline-block w-1.5 h-1.5 rounded-full"
-        style={{ backgroundColor: '#05e100' }}
-        aria-hidden="true"
-      />
+      {accent && (
+        <span
+          className="inline-block w-1.5 h-1.5 rounded-full"
+          style={{ backgroundColor: accent }}
+          aria-hidden="true"
+        />
+      )}
+    </div>
+  );
+}
+
+function BrandFooter({ branding, tone = 'white' }) {
+  if (!branding || (!branding.tagline && !branding.wordmark)) return null;
+  const color = tone === 'white' ? '#feffff' : '#008aff';
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 px-6 pb-5 flex items-end justify-between">
+      {branding.tagline ? (
+        <span
+          className="font-extra uppercase tracking-[0.18em] text-xs sm:text-sm"
+          style={{ color }}
+        >
+          {branding.tagline}
+        </span>
+      ) : <span />}
+      <Wordmark branding={branding} tone={tone} />
     </div>
   );
 }
@@ -119,9 +122,9 @@ function tallyCounts(question, votes) {
   return question.options.map((_, i) => Object.values(votes).filter((v) => v === i).length);
 }
 
-function formatResultsAsText(questions, state) {
+function formatResultsAsText(game, questions, state) {
   const lines = [
-    'Cooltra · Quiz Empujando hacia la AI',
+    game.title,
     `Participantes: ${state.participants.length}`,
     `Fecha: ${new Date().toLocaleString('es-ES')}`,
     '',
@@ -227,14 +230,15 @@ function drawRoundedRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-function renderResultsCanvas(questions, state) {
+function renderResultsCanvas(game, questions, state) {
   const width = 1200;
   const margin = 60;
   const cardPad = 32;
   const optionRowH = 76;
   const headerH = 220;
-  const footerH = 100;
-  const palette = COOLTRA_PALETTE;
+  const branding = game.branding;
+  const hasFooter = branding && (branding.tagline || branding.wordmark);
+  const footerH = hasFooter ? 100 : 40;
 
   const measureCanvas = document.createElement('canvas');
   const measureCtx = measureCanvas.getContext('2d');
@@ -277,7 +281,7 @@ function renderResultsCanvas(questions, state) {
   ctx.fillStyle = '#feffff';
   ctx.font = 'bold 64px Arial, sans-serif';
   ctx.textBaseline = 'top';
-  ctx.fillText('Empujando Cooltra hacia la AI', margin, margin);
+  ctx.fillText(game.title, margin, margin);
 
   ctx.font = '28px Arial, sans-serif';
   ctx.fillStyle = 'rgba(254,255,255,0.92)';
@@ -320,7 +324,7 @@ function renderResultsCanvas(questions, state) {
       const optY = optionsY0 + i * optionRowH;
       const pct = (counts[i] / total) * 100;
       const isWinner = max > 0 && counts[i] === max;
-      const color = palette[i % palette.length];
+      const color = PALETTE[i % PALETTE.length];
 
       drawRoundedRect(ctx, barX, optY + 28, barW, 28, 14);
       ctx.fillStyle = 'rgba(142,200,255,0.35)';
@@ -345,17 +349,25 @@ function renderResultsCanvas(questions, state) {
     y += cardH + 24;
   });
 
-  ctx.fillStyle = '#feffff';
-  ctx.font = 'bold 22px Arial, sans-serif';
-  ctx.textAlign = 'left';
-  ctx.fillText('TIME TO RIDE', margin, height - footerH + 30);
-  ctx.font = 'bold 28px Arial, sans-serif';
-  ctx.textAlign = 'right';
-  ctx.fillText('cooltra', width - margin - 24, height - footerH + 28);
-  ctx.beginPath();
-  ctx.arc(width - margin - 6, height - footerH + 42, 8, 0, Math.PI * 2);
-  ctx.fillStyle = '#05e100';
-  ctx.fill();
+  if (hasFooter) {
+    ctx.fillStyle = '#feffff';
+    ctx.textAlign = 'left';
+    if (branding.tagline) {
+      ctx.font = 'bold 22px Arial, sans-serif';
+      ctx.fillText(branding.tagline.toUpperCase(), margin, height - footerH + 30);
+    }
+    if (branding.wordmark) {
+      ctx.font = 'bold 28px Arial, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillText(branding.wordmark, width - margin - 24, height - footerH + 28);
+      if (branding.wordmarkAccentColor) {
+        ctx.beginPath();
+        ctx.arc(width - margin - 6, height - footerH + 42, 8, 0, Math.PI * 2);
+        ctx.fillStyle = branding.wordmarkAccentColor;
+        ctx.fill();
+      }
+    }
+  }
 
   return canvas;
 }
@@ -369,14 +381,15 @@ function canvasToBlob(canvas, type = 'image/png') {
   });
 }
 
-function ResultsActions({ questions, state }) {
+function ResultsActions({ game, questions, state }) {
   const [copied, setCopied] = useState(false);
   const [shareError, setShareError] = useState(null);
   const [busy, setBusy] = useState(null);
   const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
   const timestamp = new Date().toISOString().slice(0, 10);
+  const baseFilename = `quiz-${game.id}-${timestamp}`;
 
-  const text = formatResultsAsText(questions, state);
+  const text = formatResultsAsText(game, questions, state);
   const csv = formatResultsAsCsv(questions, state);
 
   const copyText = async () => {
@@ -390,19 +403,19 @@ function ResultsActions({ questions, state }) {
   };
 
   const downloadCsv = () => {
-    downloadBlob(csv, `cooltra-quiz-${timestamp}.csv`, 'text/csv;charset=utf-8');
+    downloadBlob(csv, `${baseFilename}.csv`, 'text/csv;charset=utf-8');
   };
 
   const downloadPng = async () => {
     setShareError(null);
     setBusy('png');
     try {
-      const canvas = renderResultsCanvas(questions, state);
+      const canvas = renderResultsCanvas(game, questions, state);
       const blob = await canvasToBlob(canvas, 'image/png');
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `cooltra-quiz-${timestamp}.png`;
+      a.download = `${baseFilename}.png`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -418,7 +431,7 @@ function ResultsActions({ questions, state }) {
     setShareError(null);
     setBusy('pdf');
     try {
-      const canvas = renderResultsCanvas(questions, state);
+      const canvas = renderResultsCanvas(game, questions, state);
       const { jsPDF } = await import('jspdf');
       const pdf = new jsPDF({
         orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
@@ -427,7 +440,7 @@ function ResultsActions({ questions, state }) {
         hotfixes: ['px_scaling'],
       });
       pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height);
-      pdf.save(`cooltra-quiz-${timestamp}.pdf`);
+      pdf.save(`${baseFilename}.pdf`);
     } catch (e) {
       setShareError('No se pudo generar el PDF.');
     } finally {
@@ -437,6 +450,8 @@ function ResultsActions({ questions, state }) {
 
   const downloadJson = () => {
     const payload = {
+      gameId: game.id,
+      title: game.title,
       generatedAt: new Date().toISOString(),
       participants: state.participants.length,
       questions: questions.map((q) => {
@@ -457,13 +472,13 @@ function ResultsActions({ questions, state }) {
         };
       }),
     };
-    downloadBlob(JSON.stringify(payload, null, 2), `cooltra-quiz-${timestamp}.json`, 'application/json');
+    downloadBlob(JSON.stringify(payload, null, 2), `${baseFilename}.json`, 'application/json');
   };
 
   const nativeShare = async () => {
     try {
       await navigator.share({
-        title: 'Cooltra · Resultados del quiz',
+        title: `${game.title} · Resultados`,
         text,
       });
     } catch (e) {
@@ -549,29 +564,13 @@ function ResultsActions({ questions, state }) {
   );
 }
 
-function BrandFooter({ tone = 'white' }) {
-  const color = tone === 'white' ? '#feffff' : '#008aff';
-  return (
-    <div className="pointer-events-none absolute inset-x-0 bottom-0 px-6 pb-5 flex items-end justify-between">
-      <span
-        className="font-extra uppercase tracking-[0.18em] text-xs sm:text-sm"
-        style={{ color }}
-      >
-        Time to Ride
-      </span>
-      <CooltraWordmark tone={tone} />
-    </div>
-  );
-}
-
-export default function CooltraAIQuiz() {
-  const [mode, setMode] = useState(getInitialModeFromUrl);
+export default function Quiz({ game, questions, role, onExit }) {
+  const branding = game.branding;
+  const gameId = game.id;
   const participantIdRef = useRef(`p_${Math.random().toString(36).slice(2, 9)}`);
   const registeredRef = useRef(false);
   const sessionIdRef = useRef(null);
-  const [state, setState] = useState(DEFAULT_STATE);
-  const [questions, setQuestions] = useState(null);
-  const [questionsError, setQuestionsError] = useState(null);
+  const [state, setState] = useState(EMPTY_GAME_STATE);
   const [error, setError] = useState(null);
   const [hasVoted, setHasVoted] = useState({});
   const writingRef = useRef(false);
@@ -580,49 +579,41 @@ export default function CooltraAIQuiz() {
     let active = true;
     (async () => {
       try {
-        const qs = await fetchQuestions();
-        if (active) setQuestions(qs);
-      } catch (e) {
-        if (active) setQuestionsError(e.message);
-      }
-    })();
-    return () => { active = false; };
-  }, []);
-
-  useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        const s = await fetchState();
-        if (active) setState(s);
+        const record = await fetchAllStates();
+        if (active) setState(gameSliceFromRecord(record, gameId));
       } catch (e) {
         console.warn('Initial fetch failed:', e.message);
       }
     })();
     return () => { active = false; };
-  }, []);
+  }, [gameId]);
 
   useEffect(() => {
     const interval = setInterval(async () => {
       if (writingRef.current) return;
       try {
-        const s = await fetchState();
-        setState(s);
+        const record = await fetchAllStates();
+        setState(gameSliceFromRecord(record, gameId));
         if (error) setError(null);
       } catch (e) {
         // silent fail
       }
     }, POLL_INTERVAL_MS);
     return () => clearInterval(interval);
-  }, [error]);
+  }, [error, gameId]);
 
   const safeUpdate = async (updaterFn) => {
     writingRef.current = true;
     try {
-      const latest = await fetchState();
-      const next = updaterFn(latest);
-      await writeState(next);
-      setState(next);
+      const record = await fetchAllStates();
+      const currentSlice = gameSliceFromRecord(record, gameId);
+      const nextSlice = updaterFn(currentSlice);
+      const nextRecord = {
+        ...record,
+        games: { ...record.games, [gameId]: nextSlice },
+      };
+      await writeAllStates(nextRecord);
+      setState(nextSlice);
     } catch (e) {
       setError(e.message);
     } finally {
@@ -630,33 +621,26 @@ export default function CooltraAIQuiz() {
     }
   };
 
-  const joinAsParticipant = () => {
-    setMode('participant');
-  };
-
   useEffect(() => {
-    if (mode !== 'participant' && mode !== 'presenter') {
-      sessionIdRef.current = null;
-      return;
-    }
     if (sessionIdRef.current !== null) return;
     (async () => {
       try {
-        const latest = await fetchState();
-        sessionIdRef.current = latest.sessionId ?? 0;
-        if (mode === 'participant' && !registeredRef.current) {
+        const record = await fetchAllStates();
+        const slice = gameSliceFromRecord(record, gameId);
+        sessionIdRef.current = slice.sessionId ?? 0;
+        if (role === 'participant' && !registeredRef.current) {
           registeredRef.current = true;
-          await safeUpdate((latestState) => {
-            if (latestState.participants.includes(participantIdRef.current)) return latestState;
-            return { ...latestState, participants: [...latestState.participants, participantIdRef.current] };
+          await safeUpdate((current) => {
+            if (current.participants.includes(participantIdRef.current)) return current;
+            return { ...current, participants: [...current.participants, participantIdRef.current] };
           });
         }
       } catch (e) {
-        // silent: registration will retry on next mode change
+        // silent: registration will retry
       }
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
+  }, [role, gameId]);
 
   useEffect(() => {
     if (sessionIdRef.current === null) return;
@@ -665,9 +649,9 @@ export default function CooltraAIQuiz() {
     sessionIdRef.current = null;
     registeredRef.current = false;
     setHasVoted({});
-    setMode(null);
-    clearRoleFromUrl();
-  }, [state.sessionId]);
+    clearAuthFromUrl();
+    onExit?.();
+  }, [state.sessionId, onExit]);
 
   const submitVote = async (optionIndex) => {
     const qId = questions[state.currentQuestion].id;
@@ -701,7 +685,7 @@ export default function CooltraAIQuiz() {
     if (!window.confirm('¿Seguro que quieres reiniciar el quiz? Se perderán todos los votos.')) return;
     setHasVoted({});
     await safeUpdate((latest) => ({
-      ...DEFAULT_STATE,
+      ...EMPTY_GAME_STATE,
       sessionId: latest.sessionId ?? 0,
       started: latest.started ?? false,
       participants: latest.participants ?? [],
@@ -711,64 +695,12 @@ export default function CooltraAIQuiz() {
   const closeSessions = async () => {
     if (!window.confirm('¿Cerrar la sesión? Todos los participantes volverán a la pantalla de inicio.')) return;
     setHasVoted({});
-    await safeUpdate(() => ({ ...DEFAULT_STATE, sessionId: Date.now() }));
+    await safeUpdate(() => ({ ...EMPTY_GAME_STATE, sessionId: Date.now() }));
   };
 
   const startSession = async () => {
     await safeUpdate((latest) => ({ ...latest, started: true, currentQuestion: 0, showResults: false }));
   };
-
-  if (questionsError) {
-    return (
-      <div className="relative min-h-screen bg-cooltra-blue flex items-center justify-center p-6">
-        <div className="max-w-md w-full text-center bg-cooltra-white rounded-cooltra p-8 shadow-cooltra">
-          <AlertCircle className="w-12 h-12 text-cooltra-orange mx-auto mb-4" />
-          <h2 className="font-extra text-cooltra-blue text-2xl mb-2">No se han podido cargar las preguntas</h2>
-          <p className="text-cooltra-dark/70 text-sm mb-5">{questionsError}</p>
-          <button
-            onClick={() => {
-              setQuestionsError(null);
-              fetchQuestions().then(setQuestions).catch((e) => setQuestionsError(e.message));
-            }}
-            className="px-5 py-2.5 bg-cooltra-blue hover:bg-cooltra-dark text-cooltra-white rounded-full text-sm font-semi transition"
-          >
-            Reintentar
-          </button>
-        </div>
-        <BrandFooter tone="white" />
-      </div>
-    );
-  }
-
-  if (!questions) {
-    return (
-      <div className="relative min-h-screen bg-cooltra-blue flex items-center justify-center">
-        <div className="text-cooltra-white/80 text-sm font-semi uppercase tracking-[0.18em]">Cargando preguntas…</div>
-        <BrandFooter tone="white" />
-      </div>
-    );
-  }
-
-  if (mode === 'denied') {
-    return (
-      <div className="relative min-h-screen bg-cooltra-blue flex items-center justify-center p-6">
-        <div className="max-w-md w-full text-center bg-cooltra-white rounded-cooltra p-8 shadow-cooltra">
-          <Lock className="w-12 h-12 text-cooltra-orange mx-auto mb-4" />
-          <h2 className="font-extra text-cooltra-blue text-2xl mb-2">Acceso restringido</h2>
-          <p className="text-cooltra-dark/70 text-sm mb-5">
-            Este enlace requiere una clave válida de presentador.
-          </p>
-          <a
-            href={buildShareUrl('participant')}
-            className="inline-block px-5 py-2.5 bg-cooltra-blue hover:bg-cooltra-dark text-cooltra-white rounded-full text-sm font-semi transition"
-          >
-            Entrar como participante
-          </a>
-        </div>
-        <BrandFooter tone="white" />
-      </div>
-    );
-  }
 
   if (error) {
     return (
@@ -784,91 +716,7 @@ export default function CooltraAIQuiz() {
             Continuar igualmente
           </button>
         </div>
-        <BrandFooter tone="white" />
-      </div>
-    );
-  }
-
-  if (!mode) {
-    const participantUrl = buildShareUrl('participant');
-    const presenterUrl = buildShareUrl('presenter');
-    return (
-      <div className="relative min-h-screen bg-cooltra-blue overflow-hidden">
-        <div
-          aria-hidden="true"
-          className="absolute -top-24 -right-20 w-[420px] h-[420px] rounded-full"
-          style={{ background: 'radial-gradient(closest-side, rgba(254,255,255,0.18), transparent)' }}
-        />
-        <div
-          aria-hidden="true"
-          className="absolute -bottom-24 -left-20 w-[360px] h-[360px] rounded-full"
-          style={{ background: 'radial-gradient(closest-side, rgba(5,225,0,0.18), transparent)' }}
-        />
-
-        <div className="relative z-10 min-h-screen flex items-center justify-center px-6 py-10 pb-16">
-          <div className="max-w-3xl w-full">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cooltra-white/15 border border-cooltra-white/30 backdrop-blur-sm mb-5">
-              <span className="w-1.5 h-1.5 rounded-full bg-cooltra-green animate-pulse" />
-              <span className="text-cooltra-white text-[11px] font-semi uppercase tracking-[0.18em]">
-                Cooltra · Equipo Directivo
-              </span>
-            </div>
-
-            <h1 className="font-extra text-cooltra-white text-4xl md:text-6xl leading-[0.95] mb-3">
-              Empujando Cooltra<br />hacia la AI.
-            </h1>
-            <p className="text-cooltra-white/90 text-base md:text-lg mb-6 max-w-xl">
-              Quiz inicial · 7 preguntas para entender en qué punto estamos antes de empezar el taller.
-            </p>
-
-            <div className="grid md:grid-cols-2 gap-3 mb-5">
-              <button
-                onClick={() => setMode('presenter')}
-                className="group bg-cooltra-white rounded-cooltra p-5 text-left transition hover:-translate-y-1 hover:shadow-cooltra"
-              >
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="w-10 h-10 rounded-2xl bg-cooltra-blue/10 flex items-center justify-center group-hover:bg-cooltra-blue transition">
-                    <Monitor className="w-5 h-5 text-cooltra-blue group-hover:text-cooltra-white transition" />
-                  </div>
-                  <h2 className="font-extra text-cooltra-blue text-xl">Presentador</h2>
-                </div>
-                <p className="text-cooltra-dark/70 text-xs">Proyecta esto en la sala. Controla el avance y muestra los resultados.</p>
-              </button>
-
-              <button
-                onClick={joinAsParticipant}
-                className="group bg-cooltra-dark rounded-cooltra p-5 text-left transition hover:-translate-y-1 hover:shadow-cooltra"
-              >
-                <div className="flex items-center gap-3 mb-2">
-                  <div className="w-10 h-10 rounded-2xl bg-cooltra-white/10 flex items-center justify-center">
-                    <Smartphone className="w-5 h-5 text-cooltra-white" />
-                  </div>
-                  <h2 className="font-extra text-cooltra-white text-xl">Participante</h2>
-                </div>
-                <p className="text-cooltra-light text-xs">Abre esto en tu móvil para votar. Respuestas anónimas.</p>
-              </button>
-            </div>
-
-            <div className="rounded-cooltra bg-cooltra-white/5 border border-cooltra-white/15 p-4 space-y-2">
-              <div className="text-cooltra-white/75 text-[10px] font-extra uppercase tracking-[0.18em]">
-                Enlaces directos para compartir
-              </div>
-              <ShareLinkRow label="Participantes" url={participantUrl} />
-              <ShareLinkRow label="Presentador" url={presenterUrl} />
-              {!import.meta.env.VITE_PRESENTER_KEY && (
-                <p className="text-cooltra-white/60 text-[11px] leading-snug">
-                  Define <code className="font-semi">VITE_PRESENTER_KEY</code> en <code className="font-semi">.env</code> para usar una clave única en lugar de la predeterminada.
-                </p>
-              )}
-            </div>
-
-            <p className="text-cooltra-white/70 text-[11px] mt-5 font-semi uppercase tracking-[0.18em]">
-              Pregunta {state.currentQuestion + 1} · {state.participants.length} participantes conectados
-            </p>
-          </div>
-        </div>
-
-        <BrandFooter tone="white" />
+        <BrandFooter branding={branding} tone="white" />
       </div>
     );
   }
@@ -883,7 +731,8 @@ export default function CooltraAIQuiz() {
   const participantCount = state.participants.length;
   const participantsLabel = participantCount === 1 ? 'persona conectada' : 'personas conectadas';
 
-  if (mode === 'presenter' && !state.started) {
+  if (role === 'presenter' && !state.started) {
+    const participantUrl = buildParticipantUrl(gameId);
     return (
       <div className="relative min-h-screen bg-cooltra-blue px-5 md:px-8 pt-5 pb-16 flex flex-col">
         <div className="flex items-center justify-end">
@@ -897,17 +746,25 @@ export default function CooltraAIQuiz() {
         </div>
 
         <div className="flex-1 flex flex-col items-center justify-center max-w-3xl mx-auto w-full text-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cooltra-white/15 border border-cooltra-white/30 mb-6">
-            <span className="w-1.5 h-1.5 rounded-full bg-cooltra-green animate-pulse" />
-            <span className="text-cooltra-white text-[11px] font-semi uppercase tracking-[0.18em]">Sala de espera</span>
-          </div>
+          {game.badge && (
+            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-cooltra-white/15 border border-cooltra-white/30 mb-6">
+              <span className="w-1.5 h-1.5 rounded-full bg-cooltra-green animate-pulse" />
+              <span className="text-cooltra-white text-[11px] font-semi uppercase tracking-[0.18em]">{game.badge}</span>
+            </div>
+          )}
 
           <h1 className="font-extra text-cooltra-white text-3xl md:text-5xl mb-3 leading-[1.05]">
-            Esperando a que se conecte la sala
+            {game.title}
           </h1>
-          <p className="text-cooltra-white/85 text-base md:text-lg mb-8 max-w-xl">
-            Comparte el enlace de participante y pulsa <span className="font-extra">Empezar</span> cuando estéis listos.
-          </p>
+          {game.subtitle && (
+            <p className="text-cooltra-white/85 text-base md:text-lg mb-6 max-w-xl">
+              {game.subtitle}
+            </p>
+          )}
+
+          <div className="w-full max-w-md mb-6">
+            <ShareLinkRow label="Participantes" url={participantUrl} />
+          </div>
 
           <div className="flex flex-col items-center mb-8">
             <div className="font-extra text-cooltra-white text-[7rem] md:text-[10rem] leading-none">
@@ -928,17 +785,17 @@ export default function CooltraAIQuiz() {
           </button>
           {participantCount === 0 && (
             <p className="text-cooltra-white/65 text-xs mt-3 font-semi">
-              Necesitas al menos un participante conectado
+              Comparte el enlace con la sala para que se conecten
             </p>
           )}
         </div>
 
-        <BrandFooter tone="white" />
+        <BrandFooter branding={branding} tone="white" />
       </div>
     );
   }
 
-  if (mode === 'participant' && !state.started) {
+  if (role === 'participant' && !state.started) {
     return (
       <div className="relative min-h-screen bg-cooltra-blue px-5 pt-6 pb-16 flex flex-col">
         <div className="flex-1 flex flex-col items-center justify-center max-w-md mx-auto w-full text-center">
@@ -965,12 +822,12 @@ export default function CooltraAIQuiz() {
           </p>
         </div>
 
-        <BrandFooter tone="white" />
+        <BrandFooter branding={branding} tone="white" />
       </div>
     );
   }
 
-  if (mode === 'presenter') {
+  if (role === 'presenter') {
     if (isFinished) {
       return (
         <div className="relative min-h-screen bg-cooltra-blue px-5 md:px-8 pt-5 pb-16">
@@ -1018,7 +875,7 @@ export default function CooltraAIQuiz() {
                       {q.options.map((opt, i) => {
                         const pct = (counts[i] / total) * 100;
                         const isWinner = max > 0 && i === winnerIdx;
-                        const color = COOLTRA_PALETTE[i % COOLTRA_PALETTE.length];
+                        const color = PALETTE[i % PALETTE.length];
                         return (
                           <div key={i}>
                             <div className="flex items-center gap-2 text-xs mb-1.5">
@@ -1049,9 +906,9 @@ export default function CooltraAIQuiz() {
               {state.participants.length} participantes han votado
             </div>
 
-            <ResultsActions questions={questions} state={state} />
+            <ResultsActions game={game} questions={questions} state={state} />
           </div>
-          <BrandFooter tone="white" />
+          <BrandFooter branding={branding} tone="white" />
         </div>
       );
     }
@@ -1101,7 +958,7 @@ export default function CooltraAIQuiz() {
             {currentQ.options.map((opt, i) => {
               const count = optionCounts[i];
               const pct = voteCount > 0 ? (count / voteCount) * 100 : 0;
-              const color = COOLTRA_PALETTE[i % COOLTRA_PALETTE.length];
+              const color = PALETTE[i % PALETTE.length];
               return (
                 <div
                   key={i}
@@ -1128,7 +985,7 @@ export default function CooltraAIQuiz() {
             })}
           </div>
 
-          {state.showResults && (
+          {state.showResults && currentQ.objective && (
             <div className="bg-cooltra-dark rounded-2xl px-4 py-3 mb-4 flex items-start gap-2.5 border border-cooltra-white/10">
               <Zap className="w-4 h-4 text-cooltra-green flex-shrink-0 mt-0.5" />
               <div>
@@ -1161,7 +1018,7 @@ export default function CooltraAIQuiz() {
           </div>
         </div>
 
-        <BrandFooter tone="white" />
+        <BrandFooter branding={branding} tone="white" />
       </div>
     );
   }
@@ -1176,7 +1033,7 @@ export default function CooltraAIQuiz() {
           <h1 className="font-extra text-cooltra-white text-4xl mb-3">¡Gracias por participar!</h1>
           <p className="text-cooltra-white/85">Mira la pantalla principal para ver el resumen.</p>
         </div>
-        <BrandFooter tone="white" />
+        <BrandFooter branding={branding} tone="white" />
       </div>
     );
   }
@@ -1204,7 +1061,7 @@ export default function CooltraAIQuiz() {
             const count = optionCounts[i];
             const pct = voteCount > 0 ? (count / voteCount) * 100 : 0;
             const disabled = myVote !== undefined;
-            const color = COOLTRA_PALETTE[i % COOLTRA_PALETTE.length];
+            const color = PALETTE[i % PALETTE.length];
 
             return (
               <button
@@ -1252,7 +1109,7 @@ export default function CooltraAIQuiz() {
           </div>
         )}
       </div>
-      <BrandFooter tone="blue" />
+      <BrandFooter branding={branding} tone="blue" />
     </div>
   );
 }
