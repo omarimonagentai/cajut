@@ -8,12 +8,14 @@ const BIN_ID = import.meta.env.VITE_JSONBIN_ID || "6a04316d250b1311c342ab9a";
 const API_KEY = import.meta.env.VITE_JSONBIN_KEY || "";
 const BIN_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
 const POLL_INTERVAL_MS = 2000;
+const HEARTBEAT_INTERVAL_MS = 10000;
+const PARTICIPANT_TIMEOUT_MS = 25000;
 
 const EMPTY_GAME_STATE = {
   currentQuestion: 0,
   showResults: false,
   votes: {},
-  participants: [],
+  participants: {},
   sessionId: 0,
   started: false,
 };
@@ -21,6 +23,33 @@ const EMPTY_GAME_STATE = {
 function gameSliceFromRecord(record, gameId) {
   const games = record?.games || {};
   return games[gameId] ? { ...EMPTY_GAME_STATE, ...games[gameId] } : EMPTY_GAME_STATE;
+}
+
+function normalizeParticipants(participants, now = Date.now()) {
+  if (!participants) return {};
+  if (Array.isArray(participants)) {
+    return Object.fromEntries(participants.map((id) => [id, now]));
+  }
+  if (typeof participants !== 'object') return {};
+  return participants;
+}
+
+function activeParticipantIds(participants, now = Date.now()) {
+  const map = normalizeParticipants(participants, now);
+  return Object.entries(map)
+    .filter(([, ts]) => typeof ts === 'number' && now - ts < PARTICIPANT_TIMEOUT_MS)
+    .map(([id]) => id);
+}
+
+function pruneParticipants(participants, now = Date.now()) {
+  const map = normalizeParticipants(participants, now);
+  const result = {};
+  for (const [id, ts] of Object.entries(map)) {
+    if (typeof ts === 'number' && now - ts < PARTICIPANT_TIMEOUT_MS) {
+      result[id] = ts;
+    }
+  }
+  return result;
 }
 
 async function fetchAllStates() {
@@ -126,7 +155,7 @@ function tallyCounts(question, votes) {
 function formatResultsAsText(game, questions, state) {
   const lines = [
     game.title,
-    `Participantes: ${state.participants.length}`,
+    `Participantes: ${activeParticipantIds(state.participants).length}`,
     `Fecha: ${new Date().toLocaleString('es-ES')}`,
     '',
   ];
@@ -287,7 +316,7 @@ function renderResultsCanvas(game, questions, state) {
   ctx.font = '28px Arial, sans-serif';
   ctx.fillStyle = 'rgba(254,255,255,0.92)';
   ctx.fillText(
-    `Resumen del quiz · ${state.participants.length} participantes · ${new Date().toLocaleDateString('es-ES')}`,
+    `Resumen del quiz · ${activeParticipantIds(state.participants).length} participantes · ${new Date().toLocaleDateString('es-ES')}`,
     margin,
     margin + 76,
   );
@@ -454,7 +483,7 @@ function ResultsActions({ game, questions, state }) {
       gameId: game.id,
       title: game.title,
       generatedAt: new Date().toISOString(),
-      participants: state.participants.length,
+      participants: activeParticipantIds(state.participants).length,
       questions: questions.map((q) => {
         const votes = state.votes[q.id] || {};
         const counts = tallyCounts(q, votes);
@@ -603,11 +632,18 @@ export default function Quiz({ game, questions, role, onExit }) {
     return () => clearInterval(interval);
   }, [error, gameId]);
 
-  const safeUpdate = async (updaterFn) => {
+  const safeUpdate = async (updaterFn, { force = false } = {}) => {
     writingRef.current = true;
     try {
       const record = await fetchAllStates();
       const currentSlice = gameSliceFromRecord(record, gameId);
+      if (
+        !force &&
+        sessionIdRef.current !== null &&
+        (currentSlice.sessionId ?? 0) !== sessionIdRef.current
+      ) {
+        return;
+      }
       const nextSlice = updaterFn(currentSlice);
       const nextRecord = {
         ...record,
@@ -624,22 +660,83 @@ export default function Quiz({ game, questions, role, onExit }) {
 
   useEffect(() => {
     if (sessionIdRef.current !== null) return;
+    let active = true;
     (async () => {
       try {
         const record = await fetchAllStates();
+        if (!active) return;
         const slice = gameSliceFromRecord(record, gameId);
         sessionIdRef.current = slice.sessionId ?? 0;
         if (role === 'participant' && !registeredRef.current) {
           registeredRef.current = true;
-          await safeUpdate((current) => {
-            if (current.participants.includes(participantIdRef.current)) return current;
-            return { ...current, participants: [...current.participants, participantIdRef.current] };
-          });
+          await safeUpdate((current) => ({
+            ...current,
+            participants: {
+              ...pruneParticipants(current.participants),
+              [participantIdRef.current]: Date.now(),
+            },
+          }));
         }
       } catch (e) {
         // silent: registration will retry
       }
     })();
+    return () => {
+      active = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, gameId]);
+
+  useEffect(() => {
+    if (role !== 'participant') return;
+    const interval = setInterval(() => {
+      if (writingRef.current) return;
+      if (!registeredRef.current) return;
+      if (sessionIdRef.current === null) return;
+      safeUpdate((current) => ({
+        ...current,
+        participants: {
+          ...pruneParticipants(current.participants),
+          [participantIdRef.current]: Date.now(),
+        },
+      })).catch(() => {});
+    }, HEARTBEAT_INTERVAL_MS);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [role, gameId]);
+
+  useEffect(() => {
+    if (role !== 'participant') return undefined;
+    const myId = participantIdRef.current;
+    const deregister = async () => {
+      const expectedSessionId = sessionIdRef.current;
+      if (expectedSessionId === null) return;
+      try {
+        const record = await fetchAllStates();
+        const currentSlice = gameSliceFromRecord(record, gameId);
+        if ((currentSlice.sessionId ?? 0) !== expectedSessionId) return;
+        const map = normalizeParticipants(currentSlice.participants);
+        if (!(myId in map)) return;
+        const { [myId]: _removed, ...rest } = map;
+        const nextSlice = { ...currentSlice, participants: rest };
+        const nextRecord = {
+          ...record,
+          games: { ...record.games, [gameId]: nextSlice },
+        };
+        await writeAllStates(nextRecord);
+      } catch (e) {
+        // best-effort
+      }
+    };
+    const onBeforeUnload = () => { deregister(); };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload);
+      if (registeredRef.current) {
+        registeredRef.current = false;
+        deregister();
+      }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [role, gameId]);
 
@@ -689,14 +786,14 @@ export default function Quiz({ game, questions, role, onExit }) {
       ...EMPTY_GAME_STATE,
       sessionId: latest.sessionId ?? 0,
       started: latest.started ?? false,
-      participants: latest.participants ?? [],
+      participants: pruneParticipants(latest.participants),
     }));
   };
 
   const closeSessions = async () => {
     if (!window.confirm('¿Cerrar la sesión? Todos los participantes volverán a la pantalla de inicio.')) return;
     setHasVoted({});
-    await safeUpdate(() => ({ ...EMPTY_GAME_STATE, sessionId: Date.now() }));
+    await safeUpdate(() => ({ ...EMPTY_GAME_STATE, sessionId: Date.now() }), { force: true });
   };
 
   const startSession = async () => {
@@ -729,7 +826,7 @@ export default function Quiz({ game, questions, role, onExit }) {
   const optionCounts = currentQ
     ? currentQ.options.map((_, i) => Object.values(currentVotes).filter(v => v === i).length)
     : [];
-  const participantCount = state.participants.length;
+  const participantCount = activeParticipantIds(state.participants).length;
   const participantsLabel = participantCount === 1 ? 'persona conectada' : 'personas conectadas';
 
   if (role === 'presenter' && !state.started) {
@@ -916,7 +1013,7 @@ export default function Quiz({ game, questions, role, onExit }) {
             </div>
 
             <div className="mt-6 text-center text-cooltra-white/85 font-semi text-xs uppercase tracking-[0.18em]">
-              {state.participants.length} participantes han votado
+              {participantCount} participantes han votado
             </div>
 
             <ResultsActions game={game} questions={questions} state={state} />
@@ -935,12 +1032,12 @@ export default function Quiz({ game, questions, role, onExit }) {
             </div>
             <div className="flex items-center gap-1.5 text-cooltra-white/90 text-xs font-semi">
               <Users className="w-3.5 h-3.5" />
-              {state.participants.length} conectados
+              {participantCount} conectados
             </div>
             <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-cooltra-white text-cooltra-blue shadow-cooltra">
               <BarChart3 className="w-4 h-4" />
               <span className="font-extra text-2xl md:text-3xl leading-none">{voteCount}</span>
-              <span className="font-extra text-base md:text-lg text-cooltra-blue/55 leading-none">/ {state.participants.length}</span>
+              <span className="font-extra text-base md:text-lg text-cooltra-blue/55 leading-none">/ {participantCount}</span>
               <span className="text-[10px] font-extra uppercase tracking-[0.18em] text-cooltra-blue/70">votos</span>
             </div>
           </div>
