@@ -3,85 +3,13 @@ import { Users, ChevronRight, RotateCcw, Monitor, Smartphone, Trophy, BarChart3,
 
 const COOLTRA_PALETTE = ['#008aff', '#052f62', '#ec6e24', '#05e100'];
 
-const QUESTIONS = [
-  {
-    id: 1,
-    question: "¿Con qué frecuencia usas herramientas de AI en tu trabajo?",
-    objective: "Tener un baseline real del grupo sin que nadie se sienta juzgado.",
-    options: [
-      { emoji: "🔴", text: "Nunca la he usado" },
-      { emoji: "🟡", text: "La he probado alguna vez" },
-      { emoji: "🟢", text: "La uso ocasionalmente (1-2 veces por semana)" },
-      { emoji: "🔵", text: "La uso a diario" },
-    ]
-  },
-  {
-    id: 2,
-    question: "¿Para qué has usado más la AI hasta ahora?",
-    objective: "Entender los casos de uso reales y construir ejemplos relevantes durante el taller.",
-    options: [
-      { emoji: "✍️", text: "Redactar o resumir textos" },
-      { emoji: "🔍", text: "Buscar información / investigar" },
-      { emoji: "💡", text: "Generar ideas o hacer brainstorming" },
-      { emoji: "🤷", text: "Aún no la he usado para nada concreto" },
-    ]
-  },
-  {
-    id: 3,
-    question: "¿Cuál es tu mayor miedo respecto a la AI en el trabajo?",
-    objective: "Identificar las resistencias antes de que el CPO las aborde en el taller.",
-    options: [
-      { emoji: "🤖", text: "Que reemplace mi puesto o el de mi equipo" },
-      { emoji: "🔒", text: "Que comprometa datos confidenciales" },
-      { emoji: "❌", text: "Que dé información incorrecta y no me dé cuenta" },
-      { emoji: "😕", text: "No le tengo miedo, pero tampoco sé cómo sacarle partido" },
-    ]
-  },
-  {
-    id: 4,
-    question: "¿Cómo describes tu nivel de confianza usando AI hoy?",
-    objective: "Segmentar el grupo para que el CPO ajuste el nivel de profundidad del taller.",
-    options: [
-      { emoji: "🐣", text: "Soy un completo principiante" },
-      { emoji: "🚶", text: "Sé lo básico, pero me falta seguridad" },
-      { emoji: "🏃", text: "Me defiendo bastante bien" },
-      { emoji: "🚀", text: "Podría enseñarle a otros" },
-    ]
-  },
-  {
-    id: 5,
-    question: "¿Qué herramienta te resulta más familiar a día de hoy?",
-    objective: "Conocer el ecosistema de herramientas que ya está en uso para construir sobre lo que existe.",
-    options: [
-      { emoji: "💬", text: "ChatGPT" },
-      { emoji: "🧡", text: "Claude" },
-      { emoji: "🪟", text: "Copilot (Microsoft)" },
-      { emoji: "🔧", text: "Otras / Ninguna" },
-    ]
-  },
-  {
-    id: 6,
-    question: "¿Qué te frena hoy a usar más la AI en tu día a día?",
-    objective: "Detectar barreras concretas que la organización puede resolver (formación, política de datos, licencias).",
-    options: [
-      { emoji: "⏰", text: "No tengo tiempo para aprender a usarla bien" },
-      { emoji: "🤔", text: "No sé qué tareas delegarle" },
-      { emoji: "🔐", text: "Restricciones o dudas sobre qué puedo compartir" },
-      { emoji: "💸", text: "No tengo acceso a las herramientas adecuadas" },
-    ]
-  },
-  {
-    id: 7,
-    question: "Si la AI fuera un compañero de trabajo, ¿cuál sería hoy?",
-    objective: "Terminar con humor, generar conversación y que la sala se relaje antes de entrar al contenido.",
-    options: [
-      { emoji: "👀", text: "El becario nuevo — lo observo pero no le doy trabajo" },
-      { emoji: "🤝", text: "El colega al que le consulto cosas de vez en cuando" },
-      { emoji: "🧠", text: "Mi asistente de confianza al que delego tareas" },
-      { emoji: "👑", text: "Mi copiloto — trabajamos juntos en casi todo" },
-    ]
-  },
-];
+const QUESTIONS_URL = `${import.meta.env.BASE_URL}questions.json`;
+
+async function fetchQuestions() {
+  const res = await fetch(QUESTIONS_URL, { cache: 'no-cache' });
+  if (!res.ok) throw new Error(`Questions fetch failed: ${res.status}`);
+  return res.json();
+}
 
 const BIN_ID = import.meta.env.VITE_JSONBIN_ID || "6a04316d250b1311c342ab9a";
 const API_KEY = import.meta.env.VITE_JSONBIN_KEY || "";
@@ -173,10 +101,24 @@ export default function CooltraAIQuiz() {
   const [mode, setMode] = useState(null);
   const participantIdRef = useRef(`p_${Math.random().toString(36).slice(2, 9)}`);
   const [state, setState] = useState(DEFAULT_STATE);
-  const [loading, setLoading] = useState(false);
+  const [questions, setQuestions] = useState(null);
+  const [questionsError, setQuestionsError] = useState(null);
   const [error, setError] = useState(null);
   const [hasVoted, setHasVoted] = useState({});
   const writingRef = useRef(false);
+
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const qs = await fetchQuestions();
+        if (active) setQuestions(qs);
+      } catch (e) {
+        if (active) setQuestionsError(e.message);
+      }
+    })();
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -228,7 +170,7 @@ export default function CooltraAIQuiz() {
   };
 
   const submitVote = async (optionIndex) => {
-    const qId = QUESTIONS[state.currentQuestion].id;
+    const qId = questions[state.currentQuestion].id;
     if (hasVoted[qId] !== undefined) return;
     setHasVoted({ ...hasVoted, [qId]: optionIndex });
     await safeUpdate((latest) => {
@@ -261,10 +203,32 @@ export default function CooltraAIQuiz() {
     await safeUpdate(() => ({ ...DEFAULT_STATE }));
   };
 
-  if (loading) {
+  if (questionsError) {
+    return (
+      <div className="relative min-h-screen bg-cooltra-blue flex items-center justify-center p-6">
+        <div className="max-w-md w-full text-center bg-cooltra-white rounded-cooltra p-8 shadow-cooltra">
+          <AlertCircle className="w-12 h-12 text-cooltra-orange mx-auto mb-4" />
+          <h2 className="font-extra text-cooltra-blue text-2xl mb-2">No se han podido cargar las preguntas</h2>
+          <p className="text-cooltra-dark/70 text-sm mb-5">{questionsError}</p>
+          <button
+            onClick={() => {
+              setQuestionsError(null);
+              fetchQuestions().then(setQuestions).catch((e) => setQuestionsError(e.message));
+            }}
+            className="px-5 py-2.5 bg-cooltra-blue hover:bg-cooltra-dark text-cooltra-white rounded-full text-sm font-semi transition"
+          >
+            Reintentar
+          </button>
+        </div>
+        <BrandFooter tone="white" />
+      </div>
+    );
+  }
+
+  if (!questions) {
     return (
       <div className="relative min-h-screen bg-cooltra-blue flex items-center justify-center">
-        <div className="text-cooltra-white/80 text-sm font-semi">Cargando…</div>
+        <div className="text-cooltra-white/80 text-sm font-semi uppercase tracking-[0.18em]">Cargando preguntas…</div>
         <BrandFooter tone="white" />
       </div>
     );
@@ -354,8 +318,8 @@ export default function CooltraAIQuiz() {
     );
   }
 
-  const isFinished = state.currentQuestion >= QUESTIONS.length;
-  const currentQ = QUESTIONS[state.currentQuestion];
+  const isFinished = state.currentQuestion >= questions.length;
+  const currentQ = questions[state.currentQuestion];
   const currentVotes = currentQ ? (state.votes[currentQ.id] || {}) : {};
   const voteCount = Object.keys(currentVotes).length;
   const optionCounts = currentQ
@@ -384,7 +348,7 @@ export default function CooltraAIQuiz() {
             </div>
 
             <div className="grid md:grid-cols-2 gap-5">
-              {QUESTIONS.map((q) => {
+              {questions.map((q) => {
                 const qVotes = state.votes[q.id] || {};
                 const counts = q.options.map((_, i) => Object.values(qVotes).filter(v => v === i).length);
                 const total = counts.reduce((a, b) => a + b, 0) || 1;
@@ -442,7 +406,7 @@ export default function CooltraAIQuiz() {
         <div className="flex items-center justify-between mb-10">
           <div className="flex flex-wrap items-center gap-3">
             <div className="px-3 py-1.5 rounded-full bg-cooltra-white text-cooltra-blue text-xs font-extra uppercase tracking-[0.18em]">
-              Pregunta {state.currentQuestion + 1} / {QUESTIONS.length}
+              Pregunta {state.currentQuestion + 1} / {questions.length}
             </div>
             <div className="flex items-center gap-2 text-cooltra-white/90 text-sm font-semi">
               <Users className="w-4 h-4" />
@@ -524,7 +488,7 @@ export default function CooltraAIQuiz() {
                 onClick={nextQuestion}
                 className="px-8 py-3.5 bg-cooltra-white text-cooltra-blue font-extra rounded-full transition flex items-center gap-2 hover:-translate-y-0.5 hover:shadow-cooltra"
               >
-                {state.currentQuestion < QUESTIONS.length - 1 ? 'Siguiente pregunta' : 'Ver resumen'}
+                {state.currentQuestion < questions.length - 1 ? 'Siguiente pregunta' : 'Ver resumen'}
                 <ChevronRight className="w-5 h-5" />
               </button>
             )}
@@ -559,7 +523,7 @@ export default function CooltraAIQuiz() {
       <div className="max-w-md mx-auto w-full flex-1 flex flex-col">
         <div className="flex items-center justify-between mb-6 pt-3">
           <div className="px-3 py-1 rounded-full bg-cooltra-blue text-cooltra-white text-xs font-extra uppercase tracking-[0.18em]">
-            Pregunta {state.currentQuestion + 1} / {QUESTIONS.length}
+            Pregunta {state.currentQuestion + 1} / {questions.length}
           </div>
           <div className="text-cooltra-dark/60 text-xs font-semi uppercase tracking-[0.14em]">Voto anónimo</div>
         </div>
