@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Users, ChevronRight, RotateCcw, Monitor, Smartphone, Trophy, BarChart3, AlertCircle, Zap, Copy, Check, Lock, LogOut } from 'lucide-react';
+import { Users, ChevronRight, RotateCcw, Monitor, Smartphone, Trophy, BarChart3, AlertCircle, Zap, Copy, Check, Lock, LogOut, FileDown, Share2, FileText } from 'lucide-react';
 
 const COOLTRA_PALETTE = ['#008aff', '#052f62', '#ec6e24', '#05e100'];
 
@@ -115,6 +115,59 @@ function CooltraWordmark({ tone = 'white', className = '' }) {
   );
 }
 
+function tallyCounts(question, votes) {
+  return question.options.map((_, i) => Object.values(votes).filter((v) => v === i).length);
+}
+
+function formatResultsAsText(questions, state) {
+  const lines = [
+    'Cooltra · Quiz Empujando hacia la AI',
+    `Participantes: ${state.participants.length}`,
+    `Fecha: ${new Date().toLocaleString('es-ES')}`,
+    '',
+  ];
+  for (const q of questions) {
+    const votes = state.votes[q.id] || {};
+    const counts = tallyCounts(q, votes);
+    const total = counts.reduce((a, b) => a + b, 0);
+    lines.push(`P${q.id}. ${q.question}`);
+    q.options.forEach((opt, i) => {
+      const pct = total > 0 ? Math.round((counts[i] / total) * 100) : 0;
+      lines.push(`  ${opt.emoji} ${opt.text} — ${counts[i]} votos (${pct}%)`);
+    });
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+function formatResultsAsCsv(questions, state) {
+  const rows = [['pregunta_id', 'pregunta', 'opcion', 'votos', 'porcentaje']];
+  for (const q of questions) {
+    const votes = state.votes[q.id] || {};
+    const counts = tallyCounts(q, votes);
+    const total = counts.reduce((a, b) => a + b, 0);
+    q.options.forEach((opt, i) => {
+      const pct = total > 0 ? ((counts[i] / total) * 100).toFixed(1) : '0';
+      rows.push([String(q.id), q.question, opt.text, String(counts[i]), pct]);
+    });
+  }
+  return rows
+    .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+}
+
+function downloadBlob(content, filename, type) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 function ShareLinkRow({ label, url }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
@@ -141,6 +194,127 @@ function ShareLinkRow({ label, url }) {
         {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
         {copied ? 'Copiado' : 'Copiar'}
       </button>
+    </div>
+  );
+}
+
+function ResultsActions({ questions, state }) {
+  const [copied, setCopied] = useState(false);
+  const [shareError, setShareError] = useState(null);
+  const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+  const timestamp = new Date().toISOString().slice(0, 10);
+
+  const text = formatResultsAsText(questions, state);
+  const csv = formatResultsAsCsv(questions, state);
+
+  const copyText = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch (e) {
+      setShareError('No se pudo copiar al portapapeles.');
+    }
+  };
+
+  const downloadCsv = () => {
+    downloadBlob(csv, `cooltra-quiz-${timestamp}.csv`, 'text/csv;charset=utf-8');
+  };
+
+  const downloadJson = () => {
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      participants: state.participants.length,
+      questions: questions.map((q) => {
+        const votes = state.votes[q.id] || {};
+        const counts = tallyCounts(q, votes);
+        const total = counts.reduce((a, b) => a + b, 0);
+        return {
+          id: q.id,
+          question: q.question,
+          objective: q.objective,
+          totalVotes: total,
+          options: q.options.map((opt, i) => ({
+            text: opt.text,
+            emoji: opt.emoji,
+            votes: counts[i],
+            percentage: total > 0 ? Math.round((counts[i] / total) * 100) : 0,
+          })),
+        };
+      }),
+    };
+    downloadBlob(JSON.stringify(payload, null, 2), `cooltra-quiz-${timestamp}.json`, 'application/json');
+  };
+
+  const nativeShare = async () => {
+    try {
+      await navigator.share({
+        title: 'Cooltra · Resultados del quiz',
+        text,
+      });
+    } catch (e) {
+      if (e?.name !== 'AbortError') setShareError('No se pudo abrir el menú de compartir.');
+    }
+  };
+
+  return (
+    <div className="mt-8 rounded-cooltra bg-cooltra-white text-cooltra-dark p-5 md:p-6 shadow-cooltra">
+      <div className="flex items-start gap-3 mb-4">
+        <div className="w-10 h-10 rounded-2xl bg-cooltra-blue/10 flex items-center justify-center shrink-0">
+          <FileDown className="w-5 h-5 text-cooltra-blue" />
+        </div>
+        <div>
+          <h3 className="font-extra text-cooltra-blue text-lg leading-tight">Guardar o compartir resultados</h3>
+          <p className="text-cooltra-dark/70 text-sm mt-0.5">
+            Descarga los datos para el informe o cópialos para pegarlos en Slack, email o Notion.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2">
+        <button
+          onClick={copyText}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-blue hover:bg-cooltra-dark text-cooltra-white rounded-full text-sm font-extra transition"
+        >
+          {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+          {copied ? 'Copiado' : 'Copiar resumen'}
+        </button>
+        <button
+          onClick={downloadCsv}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-dark hover:bg-cooltra-deep text-cooltra-white rounded-full text-sm font-extra transition"
+        >
+          <FileDown className="w-4 h-4" />
+          Descargar CSV
+        </button>
+        <button
+          onClick={downloadJson}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-light/60 hover:bg-cooltra-light text-cooltra-dark rounded-full text-sm font-extra transition"
+        >
+          <FileText className="w-4 h-4" />
+          Descargar JSON
+        </button>
+        {canNativeShare ? (
+          <button
+            onClick={nativeShare}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-orange hover:bg-cooltra-orange/80 text-cooltra-white rounded-full text-sm font-extra transition"
+          >
+            <Share2 className="w-4 h-4" />
+            Compartir…
+          </button>
+        ) : (
+          <button
+            onClick={() => window.print()}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-orange hover:bg-cooltra-orange/80 text-cooltra-white rounded-full text-sm font-extra transition"
+          >
+            <Share2 className="w-4 h-4" />
+            Imprimir / PDF
+          </button>
+        )}
+      </div>
+
+      {shareError && (
+        <p className="text-cooltra-orange text-xs font-semi mt-3">{shareError}</p>
+      )}
     </div>
   );
 }
@@ -644,6 +818,8 @@ export default function CooltraAIQuiz() {
             <div className="mt-6 text-center text-cooltra-white/85 font-semi text-xs uppercase tracking-[0.18em]">
               {state.participants.length} participantes han votado
             </div>
+
+            <ResultsActions questions={questions} state={state} />
           </div>
           <BrandFooter tone="white" />
         </div>
@@ -652,7 +828,7 @@ export default function CooltraAIQuiz() {
 
     return (
       <div className="relative min-h-screen bg-cooltra-blue px-5 md:px-8 pt-5 pb-16 flex flex-col">
-        <div className="flex items-center justify-between mb-5">
+        <div className="flex flex-wrap items-center justify-between mb-5 gap-3">
           <div className="flex flex-wrap items-center gap-2.5">
             <div className="px-2.5 py-1 rounded-full bg-cooltra-white text-cooltra-blue text-[11px] font-extra uppercase tracking-[0.18em]">
               Pregunta {state.currentQuestion + 1} / {questions.length}
@@ -661,9 +837,11 @@ export default function CooltraAIQuiz() {
               <Users className="w-3.5 h-3.5" />
               {state.participants.length} conectados
             </div>
-            <div className="flex items-center gap-1.5 text-cooltra-white/90 text-xs font-semi">
-              <BarChart3 className="w-3.5 h-3.5" />
-              {voteCount} votos
+            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-cooltra-white text-cooltra-blue shadow-cooltra">
+              <BarChart3 className="w-4 h-4" />
+              <span className="font-extra text-2xl md:text-3xl leading-none">{voteCount}</span>
+              <span className="font-extra text-base md:text-lg text-cooltra-blue/55 leading-none">/ {state.participants.length}</span>
+              <span className="text-[10px] font-extra uppercase tracking-[0.18em] text-cooltra-blue/70">votos</span>
             </div>
           </div>
           <div className="flex items-center gap-2">
