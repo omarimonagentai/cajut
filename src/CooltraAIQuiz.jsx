@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Users, ChevronRight, RotateCcw, Monitor, Smartphone, Trophy, BarChart3, AlertCircle, Zap, Copy, Check, Lock, LogOut, FileDown, Share2, FileText } from 'lucide-react';
+import { Users, ChevronRight, RotateCcw, Monitor, Smartphone, Trophy, BarChart3, AlertCircle, Zap, Copy, Check, Lock, LogOut, FileDown, Share2, FileText, Image as ImageIcon } from 'lucide-react';
 
 const COOLTRA_PALETTE = ['#008aff', '#052f62', '#ec6e24', '#05e100'];
 
@@ -198,9 +198,181 @@ function ShareLinkRow({ label, url }) {
   );
 }
 
+function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+  const words = String(text).split(/\s+/);
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const test = line ? `${line} ${word}` : word;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  lines.forEach((l, i) => ctx.fillText(l, x, y + i * lineHeight));
+  return lines.length * lineHeight;
+}
+
+function drawRoundedRect(ctx, x, y, w, h, r) {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+}
+
+function renderResultsCanvas(questions, state) {
+  const width = 1200;
+  const margin = 60;
+  const cardPad = 32;
+  const optionRowH = 76;
+  const headerH = 220;
+  const footerH = 100;
+  const palette = COOLTRA_PALETTE;
+
+  const measureCanvas = document.createElement('canvas');
+  const measureCtx = measureCanvas.getContext('2d');
+  measureCtx.font = 'bold 26px Arial, sans-serif';
+
+  const sections = questions.map((q) => {
+    const innerW = width - margin * 2 - cardPad * 2;
+    const titleLines = [];
+    {
+      const words = q.question.split(/\s+/);
+      let line = '';
+      for (const word of words) {
+        const test = line ? `${line} ${word}` : word;
+        if (measureCtx.measureText(test).width > innerW - 80 && line) {
+          titleLines.push(line);
+          line = word;
+        } else {
+          line = test;
+        }
+      }
+      if (line) titleLines.push(line);
+    }
+    const titleH = titleLines.length * 32 + 8;
+    const optionsH = q.options.length * optionRowH;
+    const cardH = cardPad * 2 + titleH + 16 + optionsH;
+    return { question: q, cardH };
+  });
+
+  const totalQuestionsH = sections.reduce((sum, s) => sum + s.cardH + 24, 0);
+  const height = headerH + totalQuestionsH + footerH;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#008aff';
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.fillStyle = '#feffff';
+  ctx.font = 'bold 64px Arial, sans-serif';
+  ctx.textBaseline = 'top';
+  ctx.fillText('Empujando Cooltra hacia la AI', margin, margin);
+
+  ctx.font = '28px Arial, sans-serif';
+  ctx.fillStyle = 'rgba(254,255,255,0.92)';
+  ctx.fillText(
+    `Resumen del quiz · ${state.participants.length} participantes · ${new Date().toLocaleDateString('es-ES')}`,
+    margin,
+    margin + 76,
+  );
+
+  let y = headerH;
+  sections.forEach(({ question: q, cardH }) => {
+    drawRoundedRect(ctx, margin, y, width - margin * 2, cardH, 28);
+    ctx.fillStyle = '#feffff';
+    ctx.fill();
+
+    ctx.fillStyle = '#008aff';
+    ctx.font = 'bold 16px Arial, sans-serif';
+    ctx.fillText(`PREGUNTA ${q.id}`, margin + cardPad, y + cardPad);
+
+    ctx.fillStyle = '#052f62';
+    ctx.font = 'bold 26px Arial, sans-serif';
+    const titleHeight = wrapText(
+      ctx,
+      q.question,
+      margin + cardPad,
+      y + cardPad + 28,
+      width - margin * 2 - cardPad * 2,
+      32,
+    );
+
+    const votes = state.votes[q.id] || {};
+    const counts = tallyCounts(q, votes);
+    const total = counts.reduce((a, b) => a + b, 0) || 1;
+    const max = Math.max(...counts);
+    const optionsY0 = y + cardPad + 28 + titleHeight + 16;
+    const barX = margin + cardPad;
+    const barW = width - margin * 2 - cardPad * 2;
+
+    q.options.forEach((opt, i) => {
+      const optY = optionsY0 + i * optionRowH;
+      const pct = (counts[i] / total) * 100;
+      const isWinner = max > 0 && counts[i] === max;
+      const color = palette[i % palette.length];
+
+      drawRoundedRect(ctx, barX, optY + 28, barW, 28, 14);
+      ctx.fillStyle = 'rgba(142,200,255,0.35)';
+      ctx.fill();
+
+      drawRoundedRect(ctx, barX, optY + 28, Math.max(28, (barW * pct) / 100), 28, 14);
+      ctx.fillStyle = color;
+      ctx.fill();
+
+      ctx.fillStyle = '#052f62';
+      ctx.font = `${isWinner ? 'bold ' : ''}22px Arial, sans-serif`;
+      ctx.textAlign = 'left';
+      ctx.fillText(opt.text, barX, optY + 2);
+
+      ctx.font = 'bold 22px Arial, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillStyle = isWinner ? '#008aff' : '#052f62';
+      ctx.fillText(`${counts[i]} · ${pct.toFixed(0)}%`, barX + barW, optY + 2);
+      ctx.textAlign = 'left';
+    });
+
+    y += cardH + 24;
+  });
+
+  ctx.fillStyle = '#feffff';
+  ctx.font = 'bold 22px Arial, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('TIME TO RIDE', margin, height - footerH + 30);
+  ctx.font = 'bold 28px Arial, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText('cooltra', width - margin - 24, height - footerH + 28);
+  ctx.beginPath();
+  ctx.arc(width - margin - 6, height - footerH + 42, 8, 0, Math.PI * 2);
+  ctx.fillStyle = '#05e100';
+  ctx.fill();
+
+  return canvas;
+}
+
+function canvasToBlob(canvas, type = 'image/png') {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) reject(new Error('Canvas export failed'));
+      else resolve(blob);
+    }, type);
+  });
+}
+
 function ResultsActions({ questions, state }) {
   const [copied, setCopied] = useState(false);
   const [shareError, setShareError] = useState(null);
+  const [busy, setBusy] = useState(null);
   const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
   const timestamp = new Date().toISOString().slice(0, 10);
 
@@ -219,6 +391,48 @@ function ResultsActions({ questions, state }) {
 
   const downloadCsv = () => {
     downloadBlob(csv, `cooltra-quiz-${timestamp}.csv`, 'text/csv;charset=utf-8');
+  };
+
+  const downloadPng = async () => {
+    setShareError(null);
+    setBusy('png');
+    try {
+      const canvas = renderResultsCanvas(questions, state);
+      const blob = await canvasToBlob(canvas, 'image/png');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `cooltra-quiz-${timestamp}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (e) {
+      setShareError('No se pudo generar el PNG.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const downloadPdf = async () => {
+    setShareError(null);
+    setBusy('pdf');
+    try {
+      const canvas = renderResultsCanvas(questions, state);
+      const { jsPDF } = await import('jspdf');
+      const pdf = new jsPDF({
+        orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+        unit: 'px',
+        format: [canvas.width, canvas.height],
+        hotfixes: ['px_scaling'],
+      });
+      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height);
+      pdf.save(`cooltra-quiz-${timestamp}.pdf`);
+    } catch (e) {
+      setShareError('No se pudo generar el PDF.');
+    } finally {
+      setBusy(null);
+    }
   };
 
   const downloadJson = () => {
@@ -271,26 +485,42 @@ function ResultsActions({ questions, state }) {
         </div>
       </div>
 
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-2">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+        <button
+          onClick={downloadPdf}
+          disabled={busy === 'pdf'}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-blue hover:bg-cooltra-dark text-cooltra-white rounded-full text-sm font-extra transition disabled:opacity-60"
+        >
+          <FileText className="w-4 h-4" />
+          {busy === 'pdf' ? 'Generando…' : 'Descargar PDF'}
+        </button>
+        <button
+          onClick={downloadPng}
+          disabled={busy === 'png'}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-dark hover:bg-cooltra-deep text-cooltra-white rounded-full text-sm font-extra transition disabled:opacity-60"
+        >
+          <ImageIcon className="w-4 h-4" />
+          {busy === 'png' ? 'Generando…' : 'Gráfica PNG'}
+        </button>
         <button
           onClick={copyText}
-          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-blue hover:bg-cooltra-dark text-cooltra-white rounded-full text-sm font-extra transition"
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-light/60 hover:bg-cooltra-light text-cooltra-dark rounded-full text-sm font-extra transition"
         >
           {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
           {copied ? 'Copiado' : 'Copiar resumen'}
         </button>
         <button
           onClick={downloadCsv}
-          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-dark hover:bg-cooltra-deep text-cooltra-white rounded-full text-sm font-extra transition"
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-light/40 hover:bg-cooltra-light/70 text-cooltra-dark rounded-full text-sm font-extra transition"
         >
           <FileDown className="w-4 h-4" />
           Descargar CSV
         </button>
         <button
           onClick={downloadJson}
-          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-light/60 hover:bg-cooltra-light text-cooltra-dark rounded-full text-sm font-extra transition"
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-light/40 hover:bg-cooltra-light/70 text-cooltra-dark rounded-full text-sm font-extra transition"
         >
-          <FileText className="w-4 h-4" />
+          <FileDown className="w-4 h-4" />
           Descargar JSON
         </button>
         {canNativeShare ? (
@@ -307,7 +537,7 @@ function ResultsActions({ questions, state }) {
             className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-orange hover:bg-cooltra-orange/80 text-cooltra-white rounded-full text-sm font-extra transition"
           >
             <Share2 className="w-4 h-4" />
-            Imprimir / PDF
+            Imprimir
           </button>
         )}
       </div>
