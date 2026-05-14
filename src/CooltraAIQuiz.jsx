@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Users, ChevronRight, RotateCcw, Monitor, Smartphone, Trophy, BarChart3, AlertCircle, Zap, Copy, Check, Lock, LogOut } from 'lucide-react';
+import { Users, ChevronRight, RotateCcw, Monitor, Smartphone, Trophy, BarChart3, AlertCircle, Zap, Copy, Check, Lock, LogOut, FileDown, Share2, FileText, Image as ImageIcon } from 'lucide-react';
 
 const COOLTRA_PALETTE = ['#008aff', '#052f62', '#ec6e24', '#05e100'];
 
@@ -115,6 +115,59 @@ function CooltraWordmark({ tone = 'white', className = '' }) {
   );
 }
 
+function tallyCounts(question, votes) {
+  return question.options.map((_, i) => Object.values(votes).filter((v) => v === i).length);
+}
+
+function formatResultsAsText(questions, state) {
+  const lines = [
+    'Cooltra · Quiz Empujando hacia la AI',
+    `Participantes: ${state.participants.length}`,
+    `Fecha: ${new Date().toLocaleString('es-ES')}`,
+    '',
+  ];
+  for (const q of questions) {
+    const votes = state.votes[q.id] || {};
+    const counts = tallyCounts(q, votes);
+    const total = counts.reduce((a, b) => a + b, 0);
+    lines.push(`P${q.id}. ${q.question}`);
+    q.options.forEach((opt, i) => {
+      const pct = total > 0 ? Math.round((counts[i] / total) * 100) : 0;
+      lines.push(`  ${opt.emoji} ${opt.text} — ${counts[i]} votos (${pct}%)`);
+    });
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+function formatResultsAsCsv(questions, state) {
+  const rows = [['pregunta_id', 'pregunta', 'opcion', 'votos', 'porcentaje']];
+  for (const q of questions) {
+    const votes = state.votes[q.id] || {};
+    const counts = tallyCounts(q, votes);
+    const total = counts.reduce((a, b) => a + b, 0);
+    q.options.forEach((opt, i) => {
+      const pct = total > 0 ? ((counts[i] / total) * 100).toFixed(1) : '0';
+      rows.push([String(q.id), q.question, opt.text, String(counts[i]), pct]);
+    });
+  }
+  return rows
+    .map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+}
+
+function downloadBlob(content, filename, type) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 function ShareLinkRow({ label, url }) {
   const [copied, setCopied] = useState(false);
   const copy = async () => {
@@ -141,6 +194,357 @@ function ShareLinkRow({ label, url }) {
         {copied ? <Check className="w-3 h-3" /> : <Copy className="w-3 h-3" />}
         {copied ? 'Copiado' : 'Copiar'}
       </button>
+    </div>
+  );
+}
+
+function wrapText(ctx, text, x, y, maxWidth, lineHeight) {
+  const words = String(text).split(/\s+/);
+  const lines = [];
+  let line = '';
+  for (const word of words) {
+    const test = line ? `${line} ${word}` : word;
+    if (ctx.measureText(test).width > maxWidth && line) {
+      lines.push(line);
+      line = word;
+    } else {
+      line = test;
+    }
+  }
+  if (line) lines.push(line);
+  lines.forEach((l, i) => ctx.fillText(l, x, y + i * lineHeight));
+  return lines.length * lineHeight;
+}
+
+function drawRoundedRect(ctx, x, y, w, h, r) {
+  const radius = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.arcTo(x + w, y, x + w, y + h, radius);
+  ctx.arcTo(x + w, y + h, x, y + h, radius);
+  ctx.arcTo(x, y + h, x, y, radius);
+  ctx.arcTo(x, y, x + w, y, radius);
+  ctx.closePath();
+}
+
+function renderResultsCanvas(questions, state) {
+  const width = 1200;
+  const margin = 60;
+  const cardPad = 32;
+  const optionRowH = 76;
+  const headerH = 220;
+  const footerH = 100;
+  const palette = COOLTRA_PALETTE;
+
+  const measureCanvas = document.createElement('canvas');
+  const measureCtx = measureCanvas.getContext('2d');
+  measureCtx.font = 'bold 26px Arial, sans-serif';
+
+  const sections = questions.map((q) => {
+    const innerW = width - margin * 2 - cardPad * 2;
+    const titleLines = [];
+    {
+      const words = q.question.split(/\s+/);
+      let line = '';
+      for (const word of words) {
+        const test = line ? `${line} ${word}` : word;
+        if (measureCtx.measureText(test).width > innerW - 80 && line) {
+          titleLines.push(line);
+          line = word;
+        } else {
+          line = test;
+        }
+      }
+      if (line) titleLines.push(line);
+    }
+    const titleH = titleLines.length * 32 + 8;
+    const optionsH = q.options.length * optionRowH;
+    const cardH = cardPad * 2 + titleH + 16 + optionsH;
+    return { question: q, cardH };
+  });
+
+  const totalQuestionsH = sections.reduce((sum, s) => sum + s.cardH + 24, 0);
+  const height = headerH + totalQuestionsH + footerH;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = '#008aff';
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.fillStyle = '#feffff';
+  ctx.font = 'bold 64px Arial, sans-serif';
+  ctx.textBaseline = 'top';
+  ctx.fillText('Empujando Cooltra hacia la AI', margin, margin);
+
+  ctx.font = '28px Arial, sans-serif';
+  ctx.fillStyle = 'rgba(254,255,255,0.92)';
+  ctx.fillText(
+    `Resumen del quiz · ${state.participants.length} participantes · ${new Date().toLocaleDateString('es-ES')}`,
+    margin,
+    margin + 76,
+  );
+
+  let y = headerH;
+  sections.forEach(({ question: q, cardH }) => {
+    drawRoundedRect(ctx, margin, y, width - margin * 2, cardH, 28);
+    ctx.fillStyle = '#feffff';
+    ctx.fill();
+
+    ctx.fillStyle = '#008aff';
+    ctx.font = 'bold 16px Arial, sans-serif';
+    ctx.fillText(`PREGUNTA ${q.id}`, margin + cardPad, y + cardPad);
+
+    ctx.fillStyle = '#052f62';
+    ctx.font = 'bold 26px Arial, sans-serif';
+    const titleHeight = wrapText(
+      ctx,
+      q.question,
+      margin + cardPad,
+      y + cardPad + 28,
+      width - margin * 2 - cardPad * 2,
+      32,
+    );
+
+    const votes = state.votes[q.id] || {};
+    const counts = tallyCounts(q, votes);
+    const total = counts.reduce((a, b) => a + b, 0) || 1;
+    const max = Math.max(...counts);
+    const optionsY0 = y + cardPad + 28 + titleHeight + 16;
+    const barX = margin + cardPad;
+    const barW = width - margin * 2 - cardPad * 2;
+
+    q.options.forEach((opt, i) => {
+      const optY = optionsY0 + i * optionRowH;
+      const pct = (counts[i] / total) * 100;
+      const isWinner = max > 0 && counts[i] === max;
+      const color = palette[i % palette.length];
+
+      drawRoundedRect(ctx, barX, optY + 28, barW, 28, 14);
+      ctx.fillStyle = 'rgba(142,200,255,0.35)';
+      ctx.fill();
+
+      drawRoundedRect(ctx, barX, optY + 28, Math.max(28, (barW * pct) / 100), 28, 14);
+      ctx.fillStyle = color;
+      ctx.fill();
+
+      ctx.fillStyle = '#052f62';
+      ctx.font = `${isWinner ? 'bold ' : ''}22px Arial, sans-serif`;
+      ctx.textAlign = 'left';
+      ctx.fillText(opt.text, barX, optY + 2);
+
+      ctx.font = 'bold 22px Arial, sans-serif';
+      ctx.textAlign = 'right';
+      ctx.fillStyle = isWinner ? '#008aff' : '#052f62';
+      ctx.fillText(`${counts[i]} · ${pct.toFixed(0)}%`, barX + barW, optY + 2);
+      ctx.textAlign = 'left';
+    });
+
+    y += cardH + 24;
+  });
+
+  ctx.fillStyle = '#feffff';
+  ctx.font = 'bold 22px Arial, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillText('TIME TO RIDE', margin, height - footerH + 30);
+  ctx.font = 'bold 28px Arial, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillText('cooltra', width - margin - 24, height - footerH + 28);
+  ctx.beginPath();
+  ctx.arc(width - margin - 6, height - footerH + 42, 8, 0, Math.PI * 2);
+  ctx.fillStyle = '#05e100';
+  ctx.fill();
+
+  return canvas;
+}
+
+function canvasToBlob(canvas, type = 'image/png') {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (!blob) reject(new Error('Canvas export failed'));
+      else resolve(blob);
+    }, type);
+  });
+}
+
+function ResultsActions({ questions, state }) {
+  const [copied, setCopied] = useState(false);
+  const [shareError, setShareError] = useState(null);
+  const [busy, setBusy] = useState(null);
+  const canNativeShare = typeof navigator !== 'undefined' && typeof navigator.share === 'function';
+  const timestamp = new Date().toISOString().slice(0, 10);
+
+  const text = formatResultsAsText(questions, state);
+  const csv = formatResultsAsCsv(questions, state);
+
+  const copyText = async () => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch (e) {
+      setShareError('No se pudo copiar al portapapeles.');
+    }
+  };
+
+  const downloadCsv = () => {
+    downloadBlob(csv, `cooltra-quiz-${timestamp}.csv`, 'text/csv;charset=utf-8');
+  };
+
+  const downloadPng = async () => {
+    setShareError(null);
+    setBusy('png');
+    try {
+      const canvas = renderResultsCanvas(questions, state);
+      const blob = await canvasToBlob(canvas, 'image/png');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `cooltra-quiz-${timestamp}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    } catch (e) {
+      setShareError('No se pudo generar el PNG.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const downloadPdf = async () => {
+    setShareError(null);
+    setBusy('pdf');
+    try {
+      const canvas = renderResultsCanvas(questions, state);
+      const { jsPDF } = await import('jspdf');
+      const pdf = new jsPDF({
+        orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+        unit: 'px',
+        format: [canvas.width, canvas.height],
+        hotfixes: ['px_scaling'],
+      });
+      pdf.addImage(canvas.toDataURL('image/png'), 'PNG', 0, 0, canvas.width, canvas.height);
+      pdf.save(`cooltra-quiz-${timestamp}.pdf`);
+    } catch (e) {
+      setShareError('No se pudo generar el PDF.');
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const downloadJson = () => {
+    const payload = {
+      generatedAt: new Date().toISOString(),
+      participants: state.participants.length,
+      questions: questions.map((q) => {
+        const votes = state.votes[q.id] || {};
+        const counts = tallyCounts(q, votes);
+        const total = counts.reduce((a, b) => a + b, 0);
+        return {
+          id: q.id,
+          question: q.question,
+          objective: q.objective,
+          totalVotes: total,
+          options: q.options.map((opt, i) => ({
+            text: opt.text,
+            emoji: opt.emoji,
+            votes: counts[i],
+            percentage: total > 0 ? Math.round((counts[i] / total) * 100) : 0,
+          })),
+        };
+      }),
+    };
+    downloadBlob(JSON.stringify(payload, null, 2), `cooltra-quiz-${timestamp}.json`, 'application/json');
+  };
+
+  const nativeShare = async () => {
+    try {
+      await navigator.share({
+        title: 'Cooltra · Resultados del quiz',
+        text,
+      });
+    } catch (e) {
+      if (e?.name !== 'AbortError') setShareError('No se pudo abrir el menú de compartir.');
+    }
+  };
+
+  return (
+    <div className="mt-8 rounded-cooltra bg-cooltra-white text-cooltra-dark p-5 md:p-6 shadow-cooltra">
+      <div className="flex items-start gap-3 mb-4">
+        <div className="w-10 h-10 rounded-2xl bg-cooltra-blue/10 flex items-center justify-center shrink-0">
+          <FileDown className="w-5 h-5 text-cooltra-blue" />
+        </div>
+        <div>
+          <h3 className="font-extra text-cooltra-blue text-lg leading-tight">Guardar o compartir resultados</h3>
+          <p className="text-cooltra-dark/70 text-sm mt-0.5">
+            Descarga los datos para el informe o cópialos para pegarlos en Slack, email o Notion.
+          </p>
+        </div>
+      </div>
+
+      <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2">
+        <button
+          onClick={downloadPdf}
+          disabled={busy === 'pdf'}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-blue hover:bg-cooltra-dark text-cooltra-white rounded-full text-sm font-extra transition disabled:opacity-60"
+        >
+          <FileText className="w-4 h-4" />
+          {busy === 'pdf' ? 'Generando…' : 'Descargar PDF'}
+        </button>
+        <button
+          onClick={downloadPng}
+          disabled={busy === 'png'}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-dark hover:bg-cooltra-deep text-cooltra-white rounded-full text-sm font-extra transition disabled:opacity-60"
+        >
+          <ImageIcon className="w-4 h-4" />
+          {busy === 'png' ? 'Generando…' : 'Gráfica PNG'}
+        </button>
+        <button
+          onClick={copyText}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-light/60 hover:bg-cooltra-light text-cooltra-dark rounded-full text-sm font-extra transition"
+        >
+          {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
+          {copied ? 'Copiado' : 'Copiar resumen'}
+        </button>
+        <button
+          onClick={downloadCsv}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-light/40 hover:bg-cooltra-light/70 text-cooltra-dark rounded-full text-sm font-extra transition"
+        >
+          <FileDown className="w-4 h-4" />
+          Descargar CSV
+        </button>
+        <button
+          onClick={downloadJson}
+          className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-light/40 hover:bg-cooltra-light/70 text-cooltra-dark rounded-full text-sm font-extra transition"
+        >
+          <FileDown className="w-4 h-4" />
+          Descargar JSON
+        </button>
+        {canNativeShare ? (
+          <button
+            onClick={nativeShare}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-orange hover:bg-cooltra-orange/80 text-cooltra-white rounded-full text-sm font-extra transition"
+          >
+            <Share2 className="w-4 h-4" />
+            Compartir…
+          </button>
+        ) : (
+          <button
+            onClick={() => window.print()}
+            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-cooltra-orange hover:bg-cooltra-orange/80 text-cooltra-white rounded-full text-sm font-extra transition"
+          >
+            <Share2 className="w-4 h-4" />
+            Imprimir
+          </button>
+        )}
+      </div>
+
+      {shareError && (
+        <p className="text-cooltra-orange text-xs font-semi mt-3">{shareError}</p>
+      )}
     </div>
   );
 }
@@ -644,6 +1048,8 @@ export default function CooltraAIQuiz() {
             <div className="mt-6 text-center text-cooltra-white/85 font-semi text-xs uppercase tracking-[0.18em]">
               {state.participants.length} participantes han votado
             </div>
+
+            <ResultsActions questions={questions} state={state} />
           </div>
           <BrandFooter tone="white" />
         </div>
@@ -652,7 +1058,7 @@ export default function CooltraAIQuiz() {
 
     return (
       <div className="relative min-h-screen bg-cooltra-blue px-5 md:px-8 pt-5 pb-16 flex flex-col">
-        <div className="flex items-center justify-between mb-5">
+        <div className="flex flex-wrap items-center justify-between mb-5 gap-3">
           <div className="flex flex-wrap items-center gap-2.5">
             <div className="px-2.5 py-1 rounded-full bg-cooltra-white text-cooltra-blue text-[11px] font-extra uppercase tracking-[0.18em]">
               Pregunta {state.currentQuestion + 1} / {questions.length}
@@ -661,9 +1067,11 @@ export default function CooltraAIQuiz() {
               <Users className="w-3.5 h-3.5" />
               {state.participants.length} conectados
             </div>
-            <div className="flex items-center gap-1.5 text-cooltra-white/90 text-xs font-semi">
-              <BarChart3 className="w-3.5 h-3.5" />
-              {voteCount} votos
+            <div className="flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-cooltra-white text-cooltra-blue shadow-cooltra">
+              <BarChart3 className="w-4 h-4" />
+              <span className="font-extra text-2xl md:text-3xl leading-none">{voteCount}</span>
+              <span className="font-extra text-base md:text-lg text-cooltra-blue/55 leading-none">/ {state.participants.length}</span>
+              <span className="text-[10px] font-extra uppercase tracking-[0.18em] text-cooltra-blue/70">votos</span>
             </div>
           </div>
           <div className="flex items-center gap-2">
