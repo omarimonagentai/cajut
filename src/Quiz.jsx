@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { Users, ChevronRight, RotateCcw, Trophy, BarChart3, Zap, Copy, Check, LogOut, FileDown, Share2, FileText, Image as ImageIcon } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -559,6 +559,30 @@ export default function Quiz({ game, questions, role, onExit }) {
       };
     });
   };
+
+  // Self-heal a vote that got clobbered by a concurrent participant write.
+  // JSONBin has no compare-and-swap, so the read-modify-write inside update()
+  // can lose a vote when two participants write in the same ~RTT window.
+  // After each poll, if our locally-recorded vote is missing from the bin,
+  // re-assert it. Each participant only touches their own slot, so the
+  // re-write converges instead of fighting.
+  useEffect(() => {
+    if (role !== 'participant') return;
+    for (const [qIdStr, optionIndex] of Object.entries(hasVoted)) {
+      if (state.votes?.[qIdStr]?.[participantId] === optionIndex) continue;
+      update((latest) => {
+        const currentVotes = latest.votes[qIdStr] || {};
+        if (currentVotes[participantId] === optionIndex) return latest;
+        return {
+          ...latest,
+          votes: {
+            ...latest.votes,
+            [qIdStr]: { ...currentVotes, [participantId]: optionIndex },
+          },
+        };
+      }).catch(() => {});
+    }
+  }, [state.votes, hasVoted, participantId, role, update]);
 
   const showResults = async () => {
     await update((latest) => ({ ...latest, showResults: true }));
