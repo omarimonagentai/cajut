@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react';
-import { Users, ChevronRight, RotateCcw, Trophy, BarChart3, Zap, Copy, Check, LogOut, FileDown, Share2, FileText, Image as ImageIcon, ArrowLeft } from 'lucide-react';
+import { Users, ChevronRight, RotateCcw, Trophy, BarChart3, Zap, Copy, Check, FileDown, Share2, FileText, Image as ImageIcon, ArrowLeft } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   activeParticipantIds,
@@ -547,7 +547,6 @@ export default function Quiz({ game, questions, role, onExit }) {
     showResults,
     nextQuestion,
     startSession,
-    resetQuiz: resetQuizOnServer,
     closeSession,
   } = useSession({
     gameId,
@@ -561,13 +560,8 @@ export default function Quiz({ game, questions, role, onExit }) {
     await submitVoteToServer(qId, optionIndex);
   };
 
-  const resetQuiz = async () => {
-    if (!window.confirm('¿Seguro que quieres reiniciar el quiz? Se perderán todos los votos.')) return;
-    await resetQuizOnServer();
-  };
-
-  const closeSessions = async () => {
-    if (!window.confirm('¿Cerrar la sesión? Todos los participantes volverán a la pantalla de inicio.')) return;
+  const resetSession = async () => {
+    if (!window.confirm('¿Resetear el quiz? Se perderán todos los votos y los participantes volverán al inicio.')) return;
     await closeSession();
   };
 
@@ -596,11 +590,11 @@ export default function Quiz({ game, questions, role, onExit }) {
           <div className="flex items-center gap-2">
             <ReconnectingBadge status={status} />
             <button
-              onClick={closeSessions}
+              onClick={resetSession}
               className="flex items-center gap-1.5 px-3 py-1.5 bg-cooltra-white/15 hover:bg-cooltra-white/25 border border-cooltra-white/30 rounded-full text-cooltra-white text-xs font-semi transition"
             >
-              <LogOut className="w-3.5 h-3.5" />
-              Cerrar sesión
+              <RotateCcw className="w-3.5 h-3.5" />
+              Reset
             </button>
           </div>
         </div>
@@ -720,18 +714,11 @@ export default function Quiz({ game, questions, role, onExit }) {
               <div className="flex items-center gap-2">
                 <ReconnectingBadge status={status} />
                 <button
-                  onClick={resetQuiz}
-                  className="flex items-center gap-1.5 px-3 py-1.5 bg-cooltra-white/15 hover:bg-cooltra-white/25 border border-cooltra-white/30 rounded-full text-cooltra-white text-xs font-semi transition"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  Reiniciar
-                </button>
-                <button
-                  onClick={closeSessions}
+                  onClick={resetSession}
                   className="flex items-center gap-1.5 px-3 py-1.5 bg-cooltra-orange/90 hover:bg-cooltra-orange border border-cooltra-orange rounded-full text-cooltra-white text-xs font-extra uppercase tracking-[0.1em] transition"
                 >
-                  <LogOut className="w-3.5 h-3.5" />
-                  Cerrar sesión
+                  <RotateCcw className="w-3.5 h-3.5" />
+                  Reset
                 </button>
               </div>
             </div>
@@ -813,18 +800,11 @@ export default function Quiz({ game, questions, role, onExit }) {
           </div>
           <div className="flex items-center gap-2">
             <button
-              onClick={resetQuiz}
-              className="flex items-center gap-1.5 px-2.5 py-1 bg-cooltra-white/15 hover:bg-cooltra-white/25 border border-cooltra-white/30 rounded-full text-cooltra-white text-[11px] font-semi transition"
-            >
-              <RotateCcw className="w-3 h-3" />
-              Reiniciar
-            </button>
-            <button
-              onClick={closeSessions}
+              onClick={resetSession}
               className="flex items-center gap-1.5 px-2.5 py-1 bg-cooltra-orange/90 hover:bg-cooltra-orange border border-cooltra-orange rounded-full text-cooltra-white text-[11px] font-extra uppercase tracking-[0.1em] transition"
             >
-              <LogOut className="w-3 h-3" />
-              Cerrar sesión
+              <RotateCcw className="w-3 h-3" />
+              Reset
             </button>
           </div>
         </div>
