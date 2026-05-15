@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Users, ChevronRight, RotateCcw, Trophy, BarChart3, Zap, Copy, Check, LogOut, FileDown, Share2, FileText, Image as ImageIcon, ArrowLeft } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -528,10 +528,8 @@ function ResultsActions({ game, questions, state }) {
 export default function Quiz({ game, questions, role, onExit }) {
   const branding = game.branding;
   const gameId = game.id;
-  const [hasVoted, setHasVoted] = useState({});
 
   const handleSessionClosed = useCallback(() => {
-    setHasVoted({});
     // Presenter keeps their ?ctrl=... URL and falls back to the waiting room
     // because the rotated session resets state.started to false. Only the
     // participants are sent home.
@@ -557,36 +555,19 @@ export default function Quiz({ game, questions, role, onExit }) {
     onSessionClosed: handleSessionClosed,
   });
 
-  // When the presenter hits "Reiniciar" the server clears votes and rewinds
-  // currentQuestion to 0. The participant's local hasVoted map is private
-  // state in this component and would otherwise carry over from the previous
-  // run, locking every answer button as "already voted". Detect the rewind
-  // (currentQuestion going from >0 back to 0) and reset the local map.
-  const previousCurrentQuestionRef = useRef(state.currentQuestion);
-  useEffect(() => {
-    const prev = previousCurrentQuestionRef.current;
-    if (prev > 0 && state.currentQuestion === 0) {
-      setHasVoted({});
-    }
-    previousCurrentQuestionRef.current = state.currentQuestion;
-  }, [state.currentQuestion]);
-
   const submitVote = async (optionIndex) => {
     const qId = questions[state.currentQuestion].id;
-    if (hasVoted[qId] !== undefined) return;
-    setHasVoted({ ...hasVoted, [qId]: optionIndex });
+    if (state.votes?.[qId]?.[participantId] !== undefined) return;
     await submitVoteToServer(qId, optionIndex);
   };
 
   const resetQuiz = async () => {
     if (!window.confirm('¿Seguro que quieres reiniciar el quiz? Se perderán todos los votos.')) return;
-    setHasVoted({});
     await resetQuizOnServer();
   };
 
   const closeSessions = async () => {
     if (!window.confirm('¿Cerrar la sesión? Todos los participantes volverán a la pantalla de inicio.')) return;
-    setHasVoted({});
     await closeSession();
   };
 
@@ -604,7 +585,7 @@ export default function Quiz({ game, questions, role, onExit }) {
     const participantUrl = buildParticipantUrl(gameId);
     return (
       <div className="relative min-h-screen bg-cooltra-blue px-5 md:px-8 pt-4 pb-16 flex flex-col">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center justify-between gap-2 mb-8 md:mb-10">
           <button
             onClick={onExit}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-cooltra-white/15 hover:bg-cooltra-white/25 border border-cooltra-white/30 rounded-full text-cooltra-white text-xs font-semi transition"
@@ -648,7 +629,7 @@ export default function Quiz({ game, questions, role, onExit }) {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-center w-full">
             <div className="flex flex-col items-center gap-4">
-              <div className="flex items-baseline gap-3">
+              <div className="flex items-center gap-3">
                 <div className="font-extra text-cooltra-white text-[5rem] md:text-[7rem] leading-none">
                   {participantCount}
                 </div>
@@ -933,7 +914,7 @@ export default function Quiz({ game, questions, role, onExit }) {
     );
   }
 
-  const myVote = hasVoted[currentQ.id];
+  const myVote = state.votes?.[currentQ.id]?.[participantId];
   const showingResults = state.showResults;
 
   return (
