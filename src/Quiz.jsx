@@ -425,7 +425,6 @@ function ResultsActions({ game, questions, state }) {
         return {
           id: q.id,
           question: q.question,
-          objective: q.objective,
           totalVotes: total,
           options: q.options.map((opt, i) => ({
             text: opt.text,
@@ -876,18 +875,6 @@ export default function Quiz({ game, questions, role, onExit }) {
             })}
           </div>
 
-          {state.showResults && currentQ.objective && (
-            <div className="bg-cooltra-dark rounded-2xl px-4 py-3 mb-4 flex items-start gap-2.5 border border-cooltra-white/10">
-              <Zap className="w-4 h-4 text-cooltra-green flex-shrink-0 mt-0.5" />
-              <div>
-                <div className="text-cooltra-green text-[10px] font-extra uppercase tracking-[0.18em] mb-0.5">
-                  Objetivo de esta pregunta
-                </div>
-                <div className="text-cooltra-white text-sm leading-snug">{currentQ.objective}</div>
-              </div>
-            </div>
-          )}
-
           <div className="flex justify-center">
             {!state.showResults ? (
               <button
@@ -897,13 +884,21 @@ export default function Quiz({ game, questions, role, onExit }) {
                 <BarChart3 className="w-4 h-4" />
                 Mostrar resultados
               </button>
+            ) : state.currentQuestion < questions.length - 1 ? (
+              <button
+                onClick={nextQuestion}
+                className="px-6 py-2.5 bg-cooltra-green text-cooltra-dark font-extra rounded-full transition flex items-center gap-2 hover:-translate-y-0.5 hover:shadow-cooltra"
+              >
+                Siguiente pregunta
+                <ChevronRight className="w-4 h-4" />
+              </button>
             ) : (
               <button
                 onClick={nextQuestion}
-                className="px-6 py-2.5 bg-cooltra-white text-cooltra-blue font-extra rounded-full transition flex items-center gap-2 hover:-translate-y-0.5 hover:shadow-cooltra"
+                className="px-6 py-2.5 bg-cooltra-orange text-cooltra-white font-extra rounded-full transition flex items-center gap-2 hover:-translate-y-0.5 hover:shadow-cooltra"
               >
-                {state.currentQuestion < questions.length - 1 ? 'Siguiente pregunta' : 'Ver resumen'}
-                <ChevronRight className="w-4 h-4" />
+                Ver resumen
+                <Trophy className="w-4 h-4" />
               </button>
             )}
           </div>

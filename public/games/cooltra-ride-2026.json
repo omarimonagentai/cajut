@@ -2,7 +2,6 @@
   {
     "id": 1,
     "question": "¿Con qué frecuencia usas herramientas de AI en tu trabajo?",
-    "objective": "En 2026 no usarla cada día es de losers, las cosas claras",
     "options": [
       { "emoji": "🔴", "text": "Nunca la he usado" },
       { "emoji": "🟡", "text": "La he probado alguna vez" },
@@ -13,7 +12,6 @@
   {
     "id": 2,
     "question": "¿Para qué has usado más la AI hasta ahora?",
-    "objective": "Sobre todo para poder entregarle algo a Timo en el último minuto... como siempre pero ahora con calidad",
     "options": [
       { "emoji": "✍️", "text": "Redactar o resumir textos" },
       { "emoji": "🔍", "text": "Buscar información / investigar" },
@@ -24,7 +22,6 @@
   {
     "id": 3,
     "question": "¿Cuál es tu mayor miedo respecto a la AI en el trabajo?",
-    "objective": "Si es que el nombre lo dice todo 'ai ai ai' que no sabemos que la que nos viene",
     "options": [
       { "emoji": "🤖", "text": "Que reemplace mi puesto o el de mi equipo" },
       { "emoji": "🔒", "text": "Que comprometa datos confidenciales" },
@@ -35,7 +32,6 @@
   {
     "id": 4,
     "question": "¿Cómo describes tu nivel de confianza usando AI hoy?",
-    "objective": "Habrá que ver esta misma valoración dentro de 1 año",
     "options": [
       { "emoji": "🐣", "text": "Soy un completo principiante" },
       { "emoji": "🚶", "text": "Sé lo básico, pero me falta seguridad" },
@@ -46,7 +42,6 @@
   {
     "id": 5,
     "question": "¿Qué herramienta te resulta más familiar a día de hoy?",
-    "objective": "La Cookidoo de la Thermomix aún no es herramienta de AI pero le falta poco",
     "options": [
       { "emoji": "💬", "text": "ChatGPT" },
       { "emoji": "🧡", "text": "Claude" },
@@ -57,7 +52,6 @@
   {
     "id": 6,
     "question": "¿Qué te frena hoy a usar más la AI en tu día a día?",
-    "objective": "Hércules, Troya, Callypso, ... y ¡la madre que los parió!",
     "options": [
       { "emoji": "⏰", "text": "No tengo tiempo para aprender a usarla bien" },
       { "emoji": "🤔", "text": "No sé qué tareas delegarle" },
@@ -68,7 +62,6 @@
   {
     "id": 7,
     "question": "Si la AI fuera un compañero de trabajo, ¿cuál sería hoy?",
-    "objective": "Pues eso, ponle un nombre simpático a tu AI, que vas a pasar muchas horas con ella/él",
     "options": [
       { "emoji": "👀", "text": "El becario nuevo — lo observo pero no le doy trabajo" },
       { "emoji": "🤝", "text": "El colega al que le consulto cosas de vez en cuando" },
