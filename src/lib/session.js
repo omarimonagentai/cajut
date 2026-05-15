@@ -4,8 +4,9 @@ const BIN_ID = import.meta.env.VITE_JSONBIN_ID || '6a04316d250b1311c342ab9a';
 const API_KEY = import.meta.env.VITE_JSONBIN_KEY || '';
 const BIN_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
 
-const POLL_BASE_MS = 2000;
+const POLL_BASE_MS = 1000;
 const POLL_MAX_MS = 30000;
+const FRESH_RECORD_MS = 750;
 const HEARTBEAT_INTERVAL_MS = 10000;
 const PARTICIPANT_TIMEOUT_MS = 25000;
 const FETCH_TIMEOUT_MS = 5000;
@@ -146,6 +147,8 @@ export function useSession({ gameId, role, onSessionClosed }) {
   const registeredRef = useRef(false);
   const writingRef = useRef(false);
   const lastWriteAtRef = useRef(0);
+  const lastRecordRef = useRef(null);
+  const lastFetchedAtRef = useRef(0);
   const mountedRef = useRef(true);
   const onClosedRef = useRef(onSessionClosed);
 
@@ -164,7 +167,18 @@ export function useSession({ gameId, role, onSessionClosed }) {
     async (updaterFn, { force = false } = {}) => {
       writingRef.current = true;
       try {
-        const record = await fetchAllStates();
+        let record;
+        const canSkipFetch =
+          !force &&
+          lastRecordRef.current !== null &&
+          Date.now() - lastFetchedAtRef.current < FRESH_RECORD_MS;
+        if (canSkipFetch) {
+          record = lastRecordRef.current;
+        } else {
+          record = await fetchAllStates();
+          lastRecordRef.current = record;
+          lastFetchedAtRef.current = Date.now();
+        }
         const currentSlice = gameSliceFromRecord(record, gameId);
         if (
           !force &&
@@ -190,6 +204,8 @@ export function useSession({ gameId, role, onSessionClosed }) {
         };
         await writeAllStates(nextRecord);
         lastWriteAtRef.current = Date.now();
+        lastRecordRef.current = nextRecord;
+        lastFetchedAtRef.current = Date.now();
         if (mountedRef.current) {
           setState(finalSlice);
           setStatus('live');
@@ -214,6 +230,8 @@ export function useSession({ gameId, role, onSessionClosed }) {
       try {
         const record = await fetchAllStates(controller.signal);
         if (cancelled) return;
+        lastRecordRef.current = record;
+        lastFetchedAtRef.current = Date.now();
         const slice = gameSliceFromRecord(record, gameId);
         sessionIdRef.current = slice.sessionId ?? 0;
         setState(slice);
@@ -252,6 +270,8 @@ export function useSession({ gameId, role, onSessionClosed }) {
       try {
         const record = await fetchAllStates(controller.signal);
         if (cancelled) return;
+        lastRecordRef.current = record;
+        lastFetchedAtRef.current = Date.now();
         const slice = gameSliceFromRecord(record, gameId);
         setState(slice);
         setStatus('live');
