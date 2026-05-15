@@ -1,5 +1,5 @@
-import React, { useCallback, useState } from 'react';
-import { Users, ChevronRight, RotateCcw, Trophy, BarChart3, Zap, Copy, Check, LogOut, FileDown, Share2, FileText, Image as ImageIcon } from 'lucide-react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { Users, ChevronRight, RotateCcw, Trophy, BarChart3, Zap, Copy, Check, LogOut, FileDown, Share2, FileText, Image as ImageIcon, ArrowLeft } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
   activeParticipantIds,
@@ -557,6 +557,20 @@ export default function Quiz({ game, questions, role, onExit }) {
     onSessionClosed: handleSessionClosed,
   });
 
+  // When the presenter hits "Reiniciar" the server clears votes and rewinds
+  // currentQuestion to 0. The participant's local hasVoted map is private
+  // state in this component and would otherwise carry over from the previous
+  // run, locking every answer button as "already voted". Detect the rewind
+  // (currentQuestion going from >0 back to 0) and reset the local map.
+  const previousCurrentQuestionRef = useRef(state.currentQuestion);
+  useEffect(() => {
+    const prev = previousCurrentQuestionRef.current;
+    if (prev > 0 && state.currentQuestion === 0) {
+      setHasVoted({});
+    }
+    previousCurrentQuestionRef.current = state.currentQuestion;
+  }, [state.currentQuestion]);
+
   const submitVote = async (optionIndex) => {
     const qId = questions[state.currentQuestion].id;
     if (hasVoted[qId] !== undefined) return;
@@ -590,15 +604,24 @@ export default function Quiz({ game, questions, role, onExit }) {
     const participantUrl = buildParticipantUrl(gameId);
     return (
       <div className="relative min-h-screen bg-cooltra-blue px-5 md:px-8 pt-4 pb-16 flex flex-col">
-        <div className="flex items-center justify-end gap-2">
-          <ReconnectingBadge status={status} />
+        <div className="flex items-center justify-between gap-2">
           <button
-            onClick={closeSessions}
+            onClick={onExit}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-cooltra-white/15 hover:bg-cooltra-white/25 border border-cooltra-white/30 rounded-full text-cooltra-white text-xs font-semi transition"
           >
-            <LogOut className="w-3.5 h-3.5" />
-            Cerrar sesión
+            <ArrowLeft className="w-3.5 h-3.5" />
+            Mis cajuts
           </button>
+          <div className="flex items-center gap-2">
+            <ReconnectingBadge status={status} />
+            <button
+              onClick={closeSessions}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-cooltra-white/15 hover:bg-cooltra-white/25 border border-cooltra-white/30 rounded-full text-cooltra-white text-xs font-semi transition"
+            >
+              <LogOut className="w-3.5 h-3.5" />
+              Cerrar sesión
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 flex flex-col items-center justify-center max-w-5xl mx-auto w-full">
@@ -619,11 +642,12 @@ export default function Quiz({ game, questions, role, onExit }) {
             )}
           </div>
 
-          <div className="grid md:grid-cols-[1fr_auto] gap-6 md:gap-10 items-center w-full mb-2">
+          <div className="w-full max-w-md mb-6 md:mb-10 mx-auto">
+            <ShareLinkRow label="Participantes" url={participantUrl} />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-center w-full">
             <div className="flex flex-col items-center gap-4">
-              <div className="w-full max-w-md">
-                <ShareLinkRow label="Participantes" url={participantUrl} />
-              </div>
               <div className="flex items-baseline gap-3">
                 <div className="font-extra text-cooltra-white text-[5rem] md:text-[7rem] leading-none">
                   {participantCount}
@@ -646,14 +670,16 @@ export default function Quiz({ game, questions, role, onExit }) {
                 </p>
               )}
             </div>
-            <div className="bg-cooltra-white rounded-cooltra p-3 md:p-4 shadow-cooltra mx-auto md:mx-0">
-              <QRCodeSVG
-                value={participantUrl}
-                size={220}
-                level="M"
-                marginSize={0}
-                aria-label="Código QR para unirse como participante"
-              />
+            <div className="flex justify-center">
+              <div className="bg-cooltra-white rounded-cooltra p-3 md:p-4 shadow-cooltra">
+                <QRCodeSVG
+                  value={participantUrl}
+                  size={220}
+                  level="M"
+                  marginSize={0}
+                  aria-label="Código QR para unirse como participante"
+                />
+              </div>
             </div>
           </div>
         </div>
