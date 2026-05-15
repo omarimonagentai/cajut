@@ -2,7 +2,6 @@
   {
     "id": 1,
     "question": "¿Cómo llegas a la reunión de hoy?",
-    "objective": "Detectar el estado de ánimo general del equipo antes de entrar en contenido.",
     "options": [
       { "emoji": "🔋", "text": "Con la batería al 100%" },
       { "emoji": "🙂", "text": "Bien, con ganas" },
@@ -13,7 +12,6 @@
   {
     "id": 2,
     "question": "¿Qué necesitas más esta semana?",
-    "objective": "Identificar bloqueos concretos antes de planificar la semana.",
     "options": [
       { "emoji": "🧭", "text": "Más claridad sobre prioridades" },
       { "emoji": "⏱️", "text": "Más tiempo / menos interrupciones" },
@@ -24,7 +22,6 @@
   {
     "id": 3,
     "question": "¿Cómo te sientes con la carga de trabajo actual?",
-    "objective": "Detectar pronto sobrecargas para poder reequilibrar.",
     "options": [
       { "emoji": "🟢", "text": "Cómoda, podría asumir más" },
       { "emoji": "🟡", "text": "Justo en el límite" },

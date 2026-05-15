@@ -425,7 +425,6 @@ function ResultsActions({ game, questions, state }) {
         return {
           id: q.id,
           question: q.question,
-          objective: q.objective,
           totalVotes: total,
           options: q.options.map((opt, i) => ({
             text: opt.text,
@@ -875,18 +874,6 @@ export default function Quiz({ game, questions, role, onExit }) {
               );
             })}
           </div>
-
-          {state.showResults && currentQ.objective && (
-            <div className="bg-cooltra-dark rounded-2xl px-4 py-3 mb-4 flex items-start gap-2.5 border border-cooltra-white/10">
-              <Zap className="w-4 h-4 text-cooltra-green flex-shrink-0 mt-0.5" />
-              <div>
-                <div className="text-cooltra-green text-[10px] font-extra uppercase tracking-[0.18em] mb-0.5">
-                  Objetivo de esta pregunta
-                </div>
-                <div className="text-cooltra-white text-sm leading-snug">{currentQ.objective}</div>
-              </div>
-            </div>
-          )}
 
           <div className="flex justify-center">
             {!state.showResults ? (
