@@ -106,8 +106,8 @@ export function useSession({ gameId, role, onSessionClosed }) {
         if (sessionIdRef.current === null) {
           sessionIdRef.current = incomingSid;
         } else if (incomingSid !== sessionIdRef.current) {
-          sessionIdRef.current = null;
-          setState(EMPTY_GAME_STATE);
+          sessionIdRef.current = incomingSid;
+          setState(slice);
           setStatus('live');
           onClosedRef.current?.();
           return;
