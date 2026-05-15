@@ -34,8 +34,6 @@ jobs:
 
       - name: Build
         run: npm run build
-        env:
-          VITE_JSONBIN_KEY: ${{ secrets.JSONBIN }}
 
       - name: Setup Pages
         uses: actions/configure-pages@v5
