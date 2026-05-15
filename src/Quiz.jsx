@@ -532,9 +532,14 @@ export default function Quiz({ game, questions, role, onExit }) {
 
   const handleSessionClosed = useCallback(() => {
     setHasVoted({});
-    clearAuthFromUrl();
-    onExit?.();
-  }, [onExit]);
+    // Presenter keeps their ?ctrl=... URL and falls back to the waiting room
+    // because the rotated session resets state.started to false. Only the
+    // participants are sent home.
+    if (role !== 'presenter') {
+      clearAuthFromUrl();
+      onExit?.();
+    }
+  }, [onExit, role]);
 
   const {
     state,
