@@ -198,9 +198,17 @@ export function useSession({ gameId, role, onSessionClosed }) {
 
   const closeSession = useCallback(async () => {
     try {
-      await set(dbRef(db, `games/${gameId}`), {
-        ...EMPTY_GAME_STATE,
+      // Multi-path update so the security rules can validate each child
+      // individually. set() at the parent would need a .write rule at the
+      // gameId level, which we deliberately don't grant. votes/participants
+      // are deleted (validate is skipped for nulls).
+      await fbUpdate(dbRef(db, `games/${gameId}`), {
+        currentQuestion: 0,
+        showResults: false,
+        started: false,
         sessionId: Date.now(),
+        votes: null,
+        participants: null,
       });
     } catch (e) {
       reportFailure(e);
