@@ -184,18 +184,6 @@ export function useSession({ gameId, role, onSessionClosed }) {
     }
   }, [gameId, reportFailure]);
 
-  const resetQuiz = useCallback(async () => {
-    try {
-      await fbUpdate(dbRef(db, `games/${gameId}`), {
-        currentQuestion: 0,
-        showResults: false,
-        votes: null,
-      });
-    } catch (e) {
-      reportFailure(e);
-    }
-  }, [gameId, reportFailure]);
-
   const closeSession = useCallback(async () => {
     try {
       // Multi-path update so the security rules can validate each child
@@ -228,7 +216,6 @@ export function useSession({ gameId, role, onSessionClosed }) {
     showResults,
     nextQuestion,
     startSession,
-    resetQuiz,
     closeSession,
   };
 }
