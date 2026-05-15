@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "firebase": "^12.13.0",
     "jspdf": "^4.2.1",
     "lucide-react": "^1.14.0",
     "qrcode.react": "^4.2.0",

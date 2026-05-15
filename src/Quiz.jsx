@@ -1,10 +1,8 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Users, ChevronRight, RotateCcw, Trophy, BarChart3, Zap, Copy, Check, LogOut, FileDown, Share2, FileText, Image as ImageIcon } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
-  EMPTY_GAME_STATE,
   activeParticipantIds,
-  pruneParticipants,
   useSession,
 } from './lib/session.js';
 
@@ -538,7 +536,17 @@ export default function Quiz({ game, questions, role, onExit }) {
     onExit?.();
   }, [onExit]);
 
-  const { state, status, participantId, update } = useSession({
+  const {
+    state,
+    status,
+    participantId,
+    submitVote: submitVoteToServer,
+    showResults,
+    nextQuestion,
+    startSession,
+    resetQuiz: resetQuizOnServer,
+    closeSession,
+  } = useSession({
     gameId,
     role,
     onSessionClosed: handleSessionClosed,
@@ -548,73 +556,19 @@ export default function Quiz({ game, questions, role, onExit }) {
     const qId = questions[state.currentQuestion].id;
     if (hasVoted[qId] !== undefined) return;
     setHasVoted({ ...hasVoted, [qId]: optionIndex });
-    await update((latest) => {
-      const currentVotes = latest.votes[qId] || {};
-      return {
-        ...latest,
-        votes: {
-          ...latest.votes,
-          [qId]: { ...currentVotes, [participantId]: optionIndex },
-        },
-      };
-    });
-  };
-
-  // Self-heal a vote that got clobbered by a concurrent participant write.
-  // JSONBin has no compare-and-swap, so the read-modify-write inside update()
-  // can lose a vote when two participants write in the same ~RTT window.
-  // After each poll, if our locally-recorded vote is missing from the bin,
-  // re-assert it. Each participant only touches their own slot, so the
-  // re-write converges instead of fighting.
-  useEffect(() => {
-    if (role !== 'participant') return;
-    for (const [qIdStr, optionIndex] of Object.entries(hasVoted)) {
-      if (state.votes?.[qIdStr]?.[participantId] === optionIndex) continue;
-      update((latest) => {
-        const currentVotes = latest.votes[qIdStr] || {};
-        if (currentVotes[participantId] === optionIndex) return latest;
-        return {
-          ...latest,
-          votes: {
-            ...latest.votes,
-            [qIdStr]: { ...currentVotes, [participantId]: optionIndex },
-          },
-        };
-      }).catch(() => {});
-    }
-  }, [state.votes, hasVoted, participantId, role, update]);
-
-  const showResults = async () => {
-    await update((latest) => ({ ...latest, showResults: true }));
-  };
-
-  const nextQuestion = async () => {
-    await update((latest) => ({
-      ...latest,
-      currentQuestion: latest.currentQuestion + 1,
-      showResults: false,
-    }));
+    await submitVoteToServer(qId, optionIndex);
   };
 
   const resetQuiz = async () => {
     if (!window.confirm('¿Seguro que quieres reiniciar el quiz? Se perderán todos los votos.')) return;
     setHasVoted({});
-    await update((latest) => ({
-      ...EMPTY_GAME_STATE,
-      sessionId: latest.sessionId ?? 0,
-      started: latest.started ?? false,
-      participants: pruneParticipants(latest.participants),
-    }));
+    await resetQuizOnServer();
   };
 
   const closeSessions = async () => {
     if (!window.confirm('¿Cerrar la sesión? Todos los participantes volverán a la pantalla de inicio.')) return;
     setHasVoted({});
-    await update(() => ({ ...EMPTY_GAME_STATE, sessionId: Date.now() }), { force: true });
-  };
-
-  const startSession = async () => {
-    await update((latest) => ({ ...latest, started: true, currentQuestion: 0, showResults: false }));
+    await closeSession();
   };
 
   const isFinished = state.currentQuestion >= questions.length;
