@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { Users, ChevronRight, RotateCcw, Trophy, BarChart3, Zap, Copy, Check, LogOut, FileDown, Share2, FileText, Image as ImageIcon, ArrowLeft } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -528,10 +528,8 @@ function ResultsActions({ game, questions, state }) {
 export default function Quiz({ game, questions, role, onExit }) {
   const branding = game.branding;
   const gameId = game.id;
-  const [hasVoted, setHasVoted] = useState({});
 
   const handleSessionClosed = useCallback(() => {
-    setHasVoted({});
     // Presenter keeps their ?ctrl=... URL and falls back to the waiting room
     // because the rotated session resets state.started to false. Only the
     // participants are sent home.
@@ -557,36 +555,19 @@ export default function Quiz({ game, questions, role, onExit }) {
     onSessionClosed: handleSessionClosed,
   });
 
-  // When the presenter hits "Reiniciar" the server clears votes and rewinds
-  // currentQuestion to 0. The participant's local hasVoted map is private
-  // state in this component and would otherwise carry over from the previous
-  // run, locking every answer button as "already voted". Detect the rewind
-  // (currentQuestion going from >0 back to 0) and reset the local map.
-  const previousCurrentQuestionRef = useRef(state.currentQuestion);
-  useEffect(() => {
-    const prev = previousCurrentQuestionRef.current;
-    if (prev > 0 && state.currentQuestion === 0) {
-      setHasVoted({});
-    }
-    previousCurrentQuestionRef.current = state.currentQuestion;
-  }, [state.currentQuestion]);
-
   const submitVote = async (optionIndex) => {
     const qId = questions[state.currentQuestion].id;
-    if (hasVoted[qId] !== undefined) return;
-    setHasVoted({ ...hasVoted, [qId]: optionIndex });
+    if (state.votes?.[qId]?.[participantId] !== undefined) return;
     await submitVoteToServer(qId, optionIndex);
   };
 
   const resetQuiz = async () => {
     if (!window.confirm('¿Seguro que quieres reiniciar el quiz? Se perderán todos los votos.')) return;
-    setHasVoted({});
     await resetQuizOnServer();
   };
 
   const closeSessions = async () => {
     if (!window.confirm('¿Cerrar la sesión? Todos los participantes volverán a la pantalla de inicio.')) return;
-    setHasVoted({});
     await closeSession();
   };
 
@@ -933,7 +914,7 @@ export default function Quiz({ game, questions, role, onExit }) {
     );
   }
 
-  const myVote = hasVoted[currentQ.id];
+  const myVote = state.votes?.[currentQ.id]?.[participantId];
   const showingResults = state.showResults;
 
   return (
