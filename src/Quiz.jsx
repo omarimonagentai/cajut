@@ -1,4 +1,4 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Users, ChevronRight, RotateCcw, Trophy, BarChart3, Zap, Copy, Check, LogOut, FileDown, Share2, FileText, Image as ImageIcon, ArrowLeft } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import {
@@ -556,6 +556,20 @@ export default function Quiz({ game, questions, role, onExit }) {
     role,
     onSessionClosed: handleSessionClosed,
   });
+
+  // When the presenter hits "Reiniciar" the server clears votes and rewinds
+  // currentQuestion to 0. The participant's local hasVoted map is private
+  // state in this component and would otherwise carry over from the previous
+  // run, locking every answer button as "already voted". Detect the rewind
+  // (currentQuestion going from >0 back to 0) and reset the local map.
+  const previousCurrentQuestionRef = useRef(state.currentQuestion);
+  useEffect(() => {
+    const prev = previousCurrentQuestionRef.current;
+    if (prev > 0 && state.currentQuestion === 0) {
+      setHasVoted({});
+    }
+    previousCurrentQuestionRef.current = state.currentQuestion;
+  }, [state.currentQuestion]);
 
   const submitVote = async (optionIndex) => {
     const qId = questions[state.currentQuestion].id;
