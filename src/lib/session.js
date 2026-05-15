@@ -199,17 +199,22 @@ export function useSession({ gameId, role, onSessionClosed }) {
   const closeSession = useCallback(async () => {
     try {
       // Multi-path update so the security rules can validate each child
-      // individually. set() at the parent would need a .write rule at the
-      // gameId level, which we deliberately don't grant. votes/participants
-      // are deleted (validate is skipped for nulls).
-      await fbUpdate(dbRef(db, `games/${gameId}`), {
+      // individually. The participants/ parent doesn't have .write granted
+      // (only its $participantId children do), so we have to enumerate the
+      // currently-known slots and null them one by one. votes/ does have
+      // .write at the parent, so a single null clears the whole subtree.
+      const updates = {
         currentQuestion: 0,
         showResults: false,
         started: false,
         sessionId: Date.now(),
         votes: null,
-        participants: null,
-      });
+      };
+      const participantIds = Object.keys(stateRef.current.participants || {});
+      for (const pid of participantIds) {
+        updates[`participants/${pid}`] = null;
+      }
+      await fbUpdate(dbRef(db, `games/${gameId}`), updates);
     } catch (e) {
       reportFailure(e);
     }
