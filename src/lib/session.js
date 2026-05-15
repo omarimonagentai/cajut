@@ -1,14 +1,28 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { getApps, initializeApp } from 'firebase/app';
+import {
+  getDatabase,
+  ref as dbRef,
+  onValue,
+  set,
+  update as fbUpdate,
+  remove,
+  onDisconnect,
+  serverTimestamp,
+} from 'firebase/database';
 
-const BIN_ID = import.meta.env.VITE_JSONBIN_ID || '6a04316d250b1311c342ab9a';
-const API_KEY = import.meta.env.VITE_JSONBIN_KEY || '';
-const BIN_URL = `https://api.jsonbin.io/v3/b/${BIN_ID}`;
+const firebaseConfig = {
+  apiKey: 'AIzaSyDrfxXRGImotnh-yzQy1zwZEFbTNBI6aV0',
+  authDomain: 'cajut-53d44.firebaseapp.com',
+  databaseURL: 'https://cajut-53d44-default-rtdb.europe-west1.firebasedatabase.app',
+  projectId: 'cajut-53d44',
+  storageBucket: 'cajut-53d44.firebasestorage.app',
+  messagingSenderId: '416024689923',
+  appId: '1:416024689923:web:87f580062e72a4e4defd36',
+};
 
-const POLL_BASE_MS = 1000;
-const POLL_MAX_MS = 30000;
-const HEARTBEAT_INTERVAL_MS = 10000;
-const PARTICIPANT_TIMEOUT_MS = 25000;
-const FETCH_TIMEOUT_MS = 5000;
+const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
+const db = getDatabase(app);
 
 export const EMPTY_GAME_STATE = {
   currentQuestion: 0,
@@ -19,47 +33,13 @@ export const EMPTY_GAME_STATE = {
   started: false,
 };
 
-export function normalizeParticipants(participants, now = Date.now()) {
-  if (!participants) return {};
-  if (Array.isArray(participants)) {
-    return Object.fromEntries(participants.filter(Boolean).map((id) => [id, now]));
-  }
-  if (typeof participants !== 'object') return {};
-  return participants;
-}
-
-export function activeParticipantIds(participants, now = Date.now()) {
-  const map = normalizeParticipants(participants, now);
-  return Object.entries(map)
-    .filter(([, ts]) => typeof ts === 'number' && now - ts < PARTICIPANT_TIMEOUT_MS)
-    .map(([id]) => id);
-}
-
-export function pruneParticipants(participants, now = Date.now()) {
-  const map = normalizeParticipants(participants, now);
-  const result = {};
-  for (const [id, ts] of Object.entries(map)) {
-    if (typeof ts === 'number' && now - ts < PARTICIPANT_TIMEOUT_MS) {
-      result[id] = ts;
-    }
-  }
-  return result;
-}
-
-function gameSliceFromRecord(record, gameId) {
-  const games = record?.games || {};
-  const slice = games[gameId];
-  if (!slice) return EMPTY_GAME_STATE;
-  return { ...EMPTY_GAME_STATE, ...slice };
-}
-
 function makeParticipantId() {
   try {
     if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
       return `p_${crypto.randomUUID()}`;
     }
   } catch {
-    // ignore — fall through to Math.random
+    // fall through
   }
   return `p_${Math.random().toString(36).slice(2, 11)}`;
 }
@@ -81,59 +61,9 @@ function getOrCreateParticipantId(gameId) {
   }
 }
 
-function linkSignal(controller, externalSignal) {
-  if (!externalSignal) return () => {};
-  if (externalSignal.aborted) {
-    controller.abort();
-    return () => {};
-  }
-  const onAbort = () => controller.abort();
-  externalSignal.addEventListener('abort', onAbort);
-  return () => externalSignal.removeEventListener('abort', onAbort);
-}
-
-async function fetchAllStates(externalSignal) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  const unlink = linkSignal(controller, externalSignal);
-  try {
-    const res = await fetch(`${BIN_URL}/latest`, {
-      headers: { 'X-Master-Key': API_KEY },
-      signal: controller.signal,
-    });
-    if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
-    const data = await res.json();
-    const record = data.record || {};
-    return { games: record.games && typeof record.games === 'object' ? record.games : {} };
-  } finally {
-    clearTimeout(timeoutId);
-    unlink();
-  }
-}
-
-async function writeAllStates(record, externalSignal, { keepalive = false } = {}) {
-  const controller = new AbortController();
-  // Browsers reject `signal` together with `keepalive` aborts in some versions; only attach a
-  // timeout when we are NOT trying to outlive the page.
-  const timeoutId = keepalive ? null : setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-  const unlink = keepalive ? () => {} : linkSignal(controller, externalSignal);
-  try {
-    const res = await fetch(BIN_URL, {
-      method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Master-Key': API_KEY,
-      },
-      body: JSON.stringify(record),
-      signal: keepalive ? undefined : controller.signal,
-      keepalive,
-    });
-    if (!res.ok) throw new Error(`Write failed: ${res.status}`);
-    return res.json();
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-    unlink();
-  }
+export function activeParticipantIds(participants) {
+  if (!participants || typeof participants !== 'object') return [];
+  return Object.keys(participants);
 }
 
 export function useSession({ gameId, role, onSessionClosed }) {
@@ -141,17 +71,18 @@ export function useSession({ gameId, role, onSessionClosed }) {
   const [state, setState] = useState(EMPTY_GAME_STATE);
   const [status, setStatus] = useState('connecting');
 
-  const participantIdRef = useRef(participantId);
   const sessionIdRef = useRef(null);
-  const registeredRef = useRef(false);
-  const writingRef = useRef(false);
-  const lastWriteAtRef = useRef(0);
   const mountedRef = useRef(true);
+  const stateRef = useRef(state);
   const onClosedRef = useRef(onSessionClosed);
 
   useEffect(() => {
     onClosedRef.current = onSessionClosed;
   });
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -160,184 +91,131 @@ export function useSession({ gameId, role, onSessionClosed }) {
     };
   }, []);
 
-  const update = useCallback(
-    async (updaterFn, { force = false } = {}) => {
-      writingRef.current = true;
-      try {
-        const record = await fetchAllStates();
-        const currentSlice = gameSliceFromRecord(record, gameId);
-        if (
-          !force &&
-          sessionIdRef.current !== null &&
-          (currentSlice.sessionId ?? 0) !== sessionIdRef.current
-        ) {
-          return null;
-        }
-        const updated = updaterFn(currentSlice);
-        const finalSlice =
-          role === 'participant'
-            ? {
-                ...updated,
-                participants: {
-                  ...pruneParticipants(updated.participants),
-                  [participantIdRef.current]: Date.now(),
-                },
-              }
-            : updated;
-        const nextRecord = {
-          ...record,
-          games: { ...record.games, [gameId]: finalSlice },
-        };
-        await writeAllStates(nextRecord);
-        lastWriteAtRef.current = Date.now();
-        if (mountedRef.current) {
-          setState(finalSlice);
+  // Subscribe to the game node. Firebase pushes updates over a WebSocket, so
+  // this replaces the polling loop and the per-write GET round-trip.
+  useEffect(() => {
+    sessionIdRef.current = null;
+    const gameRef = dbRef(db, `games/${gameId}`);
+    const unsubscribe = onValue(
+      gameRef,
+      (snapshot) => {
+        if (!mountedRef.current) return;
+        const data = snapshot.val() || {};
+        const slice = { ...EMPTY_GAME_STATE, ...data };
+        const incomingSid = slice.sessionId ?? 0;
+        if (sessionIdRef.current === null) {
+          sessionIdRef.current = incomingSid;
+        } else if (incomingSid !== sessionIdRef.current) {
+          sessionIdRef.current = null;
+          setState(EMPTY_GAME_STATE);
           setStatus('live');
+          onClosedRef.current?.();
+          return;
         }
-        return finalSlice;
-      } catch (e) {
-        if (mountedRef.current && e.name !== 'AbortError') {
-          setStatus('reconnecting');
-        }
-        return null;
-      } finally {
-        writingRef.current = false;
-      }
-    },
-    [gameId, role],
-  );
-
-  useEffect(() => {
-    const controller = new AbortController();
-    let cancelled = false;
-    (async () => {
-      try {
-        const record = await fetchAllStates(controller.signal);
-        if (cancelled) return;
-        const slice = gameSliceFromRecord(record, gameId);
-        sessionIdRef.current = slice.sessionId ?? 0;
         setState(slice);
         setStatus('live');
-        if (role === 'participant' && !registeredRef.current) {
-          registeredRef.current = true;
-          await update((current) => current);
-        }
-      } catch (e) {
-        if (!cancelled && e.name !== 'AbortError') setStatus('reconnecting');
-      }
-    })();
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [gameId, role, update]);
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer = null;
-    let backoff = POLL_BASE_MS;
-    let controller = null;
-
-    const schedule = (delay) => {
-      timer = setTimeout(poll, delay);
-    };
-
-    const poll = async () => {
-      if (cancelled) return;
-      if (writingRef.current) {
-        schedule(POLL_BASE_MS);
-        return;
-      }
-      controller = new AbortController();
-      try {
-        const record = await fetchAllStates(controller.signal);
-        if (cancelled) return;
-        const slice = gameSliceFromRecord(record, gameId);
-        setState(slice);
-        setStatus('live');
-        backoff = POLL_BASE_MS;
-      } catch (e) {
-        if (cancelled || e.name === 'AbortError') return;
-        setStatus('reconnecting');
-        backoff = Math.min(backoff * 2, POLL_MAX_MS);
-      } finally {
-        if (!cancelled) schedule(backoff);
-      }
-    };
-
-    schedule(POLL_BASE_MS);
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-      if (controller) controller.abort();
-    };
+      },
+      () => {
+        if (mountedRef.current) setStatus('reconnecting');
+      },
+    );
+    return unsubscribe;
   }, [gameId]);
 
+  // Participant presence. onDisconnect runs server-side when the WebSocket
+  // closes, so closing the tab or losing the network auto-removes the entry.
   useEffect(() => {
     if (role !== 'participant') return undefined;
-    const interval = setInterval(() => {
-      if (writingRef.current) return;
-      if (!registeredRef.current) return;
-      if (sessionIdRef.current === null) return;
-      if (Date.now() - lastWriteAtRef.current < HEARTBEAT_INTERVAL_MS) return;
-      update((current) => current).catch(() => {});
-    }, HEARTBEAT_INTERVAL_MS);
-    return () => clearInterval(interval);
-  }, [role, update]);
-
-  useEffect(() => {
-    if (sessionIdRef.current === null) return;
-    if ((state.sessionId ?? 0) === sessionIdRef.current) return;
-    sessionIdRef.current = null;
-    registeredRef.current = false;
-    onClosedRef.current?.();
-  }, [state.sessionId]);
-
-  useEffect(() => {
-    if (role !== 'participant') return undefined;
-    const myId = participantIdRef.current;
-
-    const deregister = async ({ keepalive = false } = {}) => {
-      const expectedSessionId = sessionIdRef.current;
-      if (expectedSessionId === null) return;
-      try {
-        const record = await fetchAllStates();
-        const currentSlice = gameSliceFromRecord(record, gameId);
-        if ((currentSlice.sessionId ?? 0) !== expectedSessionId) return;
-        const map = normalizeParticipants(currentSlice.participants);
-        if (!(myId in map)) return;
-        const { [myId]: _removed, ...rest } = map;
-        const nextSlice = { ...currentSlice, participants: rest };
-        const nextRecord = {
-          ...record,
-          games: { ...record.games, [gameId]: nextSlice },
-        };
-        await writeAllStates(nextRecord, undefined, { keepalive });
-      } catch {
-        // best-effort
-      }
-    };
-
-    const onUnload = () => {
-      deregister({ keepalive: true });
-    };
-    window.addEventListener('pagehide', onUnload);
-    window.addEventListener('beforeunload', onUnload);
-
+    const partRef = dbRef(db, `games/${gameId}/participants/${participantId}`);
+    onDisconnect(partRef).remove().catch(() => {});
+    set(partRef, serverTimestamp()).catch(() => {});
     return () => {
-      window.removeEventListener('pagehide', onUnload);
-      window.removeEventListener('beforeunload', onUnload);
-      if (registeredRef.current) {
-        registeredRef.current = false;
-        deregister();
-      }
+      onDisconnect(partRef).cancel().catch(() => {});
+      remove(partRef).catch(() => {});
     };
-  }, [role, gameId]);
+  }, [gameId, role, participantId]);
+
+  const reportFailure = useCallback((e) => {
+    if (mountedRef.current && e?.code !== 'PERMISSION_DENIED') {
+      setStatus('reconnecting');
+    }
+  }, []);
+
+  const submitVote = useCallback(
+    async (qId, optionIndex) => {
+      try {
+        await set(dbRef(db, `games/${gameId}/votes/${qId}/${participantId}`), optionIndex);
+      } catch (e) {
+        reportFailure(e);
+      }
+    },
+    [gameId, participantId, reportFailure],
+  );
+
+  const showResults = useCallback(async () => {
+    try {
+      await set(dbRef(db, `games/${gameId}/showResults`), true);
+    } catch (e) {
+      reportFailure(e);
+    }
+  }, [gameId, reportFailure]);
+
+  const nextQuestion = useCallback(async () => {
+    try {
+      const current = stateRef.current.currentQuestion ?? 0;
+      await fbUpdate(dbRef(db, `games/${gameId}`), {
+        currentQuestion: current + 1,
+        showResults: false,
+      });
+    } catch (e) {
+      reportFailure(e);
+    }
+  }, [gameId, reportFailure]);
+
+  const startSession = useCallback(async () => {
+    try {
+      await fbUpdate(dbRef(db, `games/${gameId}`), {
+        started: true,
+        currentQuestion: 0,
+        showResults: false,
+      });
+    } catch (e) {
+      reportFailure(e);
+    }
+  }, [gameId, reportFailure]);
+
+  const resetQuiz = useCallback(async () => {
+    try {
+      await fbUpdate(dbRef(db, `games/${gameId}`), {
+        currentQuestion: 0,
+        showResults: false,
+        votes: null,
+      });
+    } catch (e) {
+      reportFailure(e);
+    }
+  }, [gameId, reportFailure]);
+
+  const closeSession = useCallback(async () => {
+    try {
+      await set(dbRef(db, `games/${gameId}`), {
+        ...EMPTY_GAME_STATE,
+        sessionId: Date.now(),
+      });
+    } catch (e) {
+      reportFailure(e);
+    }
+  }, [gameId, reportFailure]);
 
   return {
     state,
     status,
     participantId,
-    update,
+    submitVote,
+    showResults,
+    nextQuestion,
+    startSession,
+    resetQuiz,
+    closeSession,
   };
 }
