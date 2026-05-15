@@ -585,7 +585,7 @@ export default function Quiz({ game, questions, role, onExit }) {
     const participantUrl = buildParticipantUrl(gameId);
     return (
       <div className="relative min-h-screen bg-cooltra-blue px-5 md:px-8 pt-4 pb-16 flex flex-col">
-        <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center justify-between gap-2 mb-8 md:mb-10">
           <button
             onClick={onExit}
             className="flex items-center gap-1.5 px-3 py-1.5 bg-cooltra-white/15 hover:bg-cooltra-white/25 border border-cooltra-white/30 rounded-full text-cooltra-white text-xs font-semi transition"
@@ -629,7 +629,7 @@ export default function Quiz({ game, questions, role, onExit }) {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-12 items-center w-full">
             <div className="flex flex-col items-center gap-4">
-              <div className="flex items-baseline gap-3">
+              <div className="flex items-center gap-3">
                 <div className="font-extra text-cooltra-white text-[5rem] md:text-[7rem] leading-none">
                   {participantCount}
                 </div>
